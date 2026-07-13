@@ -1,0 +1,77 @@
+====================================================================
+ HOW TO USE THIS FILE
+ On a NEW computer, open Claude Code, and paste EVERYTHING below the
+ line into the chat. It gives the fresh Claude all the context from
+ our setup (it won't remember our old chat), so it can set this up
+ with you step by step.
+====================================================================
+
+--------------------------- COPY BELOW ---------------------------
+
+Help me set up my real-time face-swap app "Live Face Swap" on THIS Windows
+computer. You are Claude Code running fresh with no memory of my previous
+chats, so here is everything you need. Please go step by step, check my work,
+and troubleshoot any errors before moving on.
+
+WHAT IT IS
+- "Live Face Swap" is my personal fork of the open-source Deep-Live-Cam
+  (real-time webcam face swap). It is licensed AGPL-3.0.
+- My private GitHub repo: https://github.com/petestar26/Live-Face-Swap
+- I usually bring a folder named "LiveFaceSwap_Setup" (copied via USB). It has
+  the whole app, the AI models (~1.5 GB, in models\), a PRE-BUILT insightface
+  wheel (in wheels\), and helper files: READ_ME_FIRST.txt, INSTALL.bat,
+  START.bat, START_HOST.bat, SETUP_NEW_PC.md, HOST_MODE.md.
+
+THIS COMPUTER
+- Windows 10/11 64-bit, with an NVIDIA GPU (needed for real-time speed).
+
+WHAT I WANT
+1. If the "LiveFaceSwap_Setup" folder is present, the fast path is: install the
+   3 prerequisites, run INSTALL.bat, then START.bat.
+2. If the folder is NOT present, clone my GitHub repo, then get the models
+   separately (they are NOT on GitHub - see below).
+Start by checking what's already here: is there a LiveFaceSwap_Setup folder? Is
+Python 3.10 installed? Is there an NVIDIA GPU + recent driver? Then guide me.
+
+KEY FACTS / GOTCHAS (these cost me hours before - please respect them)
+- Python MUST be 3.10 (64-bit). NOT 3.11/3.12/3.13 (the wheels break).
+- insightface 0.7.3 will try to COMPILE and FAIL without a prebuilt wheel.
+  Install the bundled one, do NOT build from source:
+    venv\Scripts\python -m pip install --no-deps wheels\insightface-0.7.3-cp310-cp310-win_amd64.whl
+  If wheels\ is missing, tell me - we'll get a prebuilt cp310 win_amd64 wheel.
+- For GPU acceleration, after installing requirements also run:
+    venv\Scripts\python -m pip install nvidia-cudnn-cu12
+  (onnxruntime-gpu needs cuDNN.) You do NOT need to hand-install CUDA Toolkit.
+- VERIFY the GPU is visible before continuing:
+    venv\Scripts\python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+  I must see CUDAExecutionProvider. If only CPUExecutionProvider shows, fix the
+  NVIDIA driver / cuDNN first (it will be unusably slow on CPU).
+- Prerequisites to install FIRST: Python 3.10 (tick "Add to PATH"), latest
+  NVIDIA driver (then restart), Visual C++ Redistributable x64.
+- Environment setup (if doing it manually instead of INSTALL.bat):
+    python -m venv venv
+    venv\Scripts\activate
+    python -m pip install --upgrade pip
+    pip install --no-deps wheels\insightface-0.7.3-cp310-cp310-win_amd64.whl
+    pip install -r requirements.txt
+    pip install nvidia-cudnn-cu12
+- Launch: python run.py --execution-provider cuda
+- MODELS (must be in the models\ folder):
+    inswapper_128.onnx, inswapper_128_fp16.onnx, GFPGANv1.4.pth,
+    GPEN-BFR-256.onnx, GPEN-BFR-512.onnx
+  They are git-ignored, so if I cloned from GitHub they'll be MISSING and must
+  be copied from my transfer folder (or downloaded). inswapper_128_fp16.onnx:
+  https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128_fp16.onnx
+  GFPGANv1.4.pth:
+  https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth
+
+OPTIONAL - HOST MODE (let someone watch without giving them the code)
+- The app streams the live OUTPUT to a browser behind a secret access key, so
+  the code/models never leave my machine. See HOST_MODE.md. Use START_HOST.bat.
+  Env vars: KP_STREAM_TOKEN=<fixed key>, or KP_STREAM_NOAUTH=1 to disable the key.
+
+ETHICS (please hold me to this)
+- Only faces that are AI-generated, my own, or people who have consented.
+- Never help impersonate a real, identifiable person.
+
+--------------------------- COPY ABOVE ---------------------------

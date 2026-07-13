@@ -6,7 +6,17 @@ all the work and *streams the result*. This is a tiny, dependency-free MJPEG-ove
 server (Python stdlib + OpenCV, both already required) that any device on the same network
 can open in a browser:
 
-    http://<desktop-lan-ip>:8765/
+    http://<desktop-lan-ip>:8765/?k=<access-key>
+
+ACCESS CONTROL (host-it-yourself model)
+---------------------------------------
+The stream is protected by a secret access key so only people you send the exact
+link to can watch — the code and models never leave your machine; the viewer only
+sees the output. Behaviour:
+
+    * By default a random key is generated each launch and printed with the URL.
+    * Set env  KP_STREAM_TOKEN=mysecret  to use a fixed key (stable link across restarts).
+    * Set env  KP_STREAM_NOAUTH=1        to disable the key (old open behaviour, LAN only).
 
 Usage from the app (already wired behind the "Stream to Phone" toggle):
 
@@ -20,10 +30,13 @@ Or standalone:
     srv.update_frame(frame_bgr); ...; srv.stop()
 """
 
+import os
+import secrets
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 import cv2
 import numpy as np
@@ -41,6 +54,18 @@ def get_lan_ip() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _resolve_token(token: Optional[str]) -> str:
+    """Decide the access key: explicit arg > env > random. '' means no auth."""
+    if os.environ.get("KP_STREAM_NOAUTH", "").strip() in ("1", "true", "yes", "on"):
+        return ""
+    if token:
+        return token
+    env = os.environ.get("KP_STREAM_TOKEN", "").strip()
+    if env:
+        return env
+    return secrets.token_urlsafe(9)  # ~12-char unguessable key, fresh each launch
 
 
 class _FrameBuffer:
@@ -69,21 +94,32 @@ class _FrameBuffer:
             return self._jpeg, self._seq
 
 
-_PAGE = (
-    "<!doctype html><html><head><meta charset='utf-8'>"
-    "<meta name='viewport' content='width=device-width,initial-scale=1,"
-    "maximum-scale=1,user-scalable=no'>"
-    "<title>Live Face Swap — by Peter</title>"
-    "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
-    "img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}"
-    "</style></head><body>"
-    "<img src='/stream.mjpg' alt='live' onclick=\"if(document.fullscreenElement)"
-    "document.exitFullscreen();else document.documentElement.requestFullscreen();\">"
-    "</body></html>"
-).encode("utf-8")
+def _build_page(token: str) -> bytes:
+    """Landing page; embeds the access key into the stream URL when auth is on."""
+    q = f"?k={token}" if token else ""
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1,"
+        "maximum-scale=1,user-scalable=no'>"
+        "<title>Live Face Swap — by Peter</title>"
+        "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
+        "img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}"
+        "</style></head><body>"
+        f"<img src='/stream.mjpg{q}' alt='live' onclick=\"if(document.fullscreenElement)"
+        "document.exitFullscreen();else document.documentElement.requestFullscreen();\">"
+        "</body></html>"
+    ).encode("utf-8")
 
 
-def _make_handler(buffer: _FrameBuffer):
+_DENIED = (
+    b"<!doctype html><html><head><meta charset='utf-8'><title>Access denied</title>"
+    b"<style>body{font-family:sans-serif;background:#111;color:#ddd;text-align:center;"
+    b"padding-top:20%}</style></head><body><h2>Access denied</h2>"
+    b"<p>You need the private link with its access key.</p></body></html>"
+)
+
+
+def _make_handler(buffer: _FrameBuffer, token: str):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -93,17 +129,38 @@ def _make_handler(buffer: _FrameBuffer):
         def _no_store(self):
             self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
 
+        def _authorized(self) -> bool:
+            if not token:
+                return True
+            supplied = (parse_qs(urlparse(self.path).query).get("k") or [""])[0]
+            return bool(supplied) and secrets.compare_digest(supplied, token)
+
+        def _deny(self):
+            self.send_response(403)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(_DENIED)))
+            self._no_store()
+            self.end_headers()
+            self.wfile.write(_DENIED)
+
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(_PAGE)))
-                self._no_store()
-                self.end_headers()
-                self.wfile.write(_PAGE)
+            path = urlparse(self.path).path
+
+            if not self._authorized():
+                self._deny()
                 return
 
-            if self.path.startswith("/snapshot"):
+            if path in ("/", "/index.html"):
+                page = _build_page(token)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(page)))
+                self._no_store()
+                self.end_headers()
+                self.wfile.write(page)
+                return
+
+            if path.startswith("/snapshot"):
                 jpeg = buffer.latest()
                 if jpeg is None:
                     self.send_error(503, "no frame yet")
@@ -116,7 +173,7 @@ def _make_handler(buffer: _FrameBuffer):
                 self.wfile.write(jpeg)
                 return
 
-            if self.path.startswith("/stream.mjpg"):
+            if path.startswith("/stream.mjpg"):
                 self.send_response(200)
                 self.send_header(
                     "Content-Type", f"multipart/x-mixed-replace; boundary={_BOUNDARY}"
@@ -146,10 +203,12 @@ def _make_handler(buffer: _FrameBuffer):
 
 
 class WebStreamServer:
-    def __init__(self, host: str = "0.0.0.0", port: int = 8765, jpeg_quality: int = 80):
+    def __init__(self, host: str = "0.0.0.0", port: int = 8765, jpeg_quality: int = 80,
+                 token: Optional[str] = None):
         self.host = host
         self.port = int(port)
         self.jpeg_quality = int(np.clip(jpeg_quality, 10, 100))
+        self.token = _resolve_token(token)
         self._buffer = _FrameBuffer()
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -157,7 +216,9 @@ class WebStreamServer:
     def start(self) -> "WebStreamServer":
         if self._httpd is not None:
             return self
-        self._httpd = ThreadingHTTPServer((self.host, self.port), _make_handler(self._buffer))
+        self._httpd = ThreadingHTTPServer(
+            (self.host, self.port), _make_handler(self._buffer, self.token)
+        )
         self._httpd.daemon_threads = True
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()
@@ -173,7 +234,8 @@ class WebStreamServer:
             self._buffer.update(buf.tobytes())
 
     def url(self) -> str:
-        return f"http://{get_lan_ip()}:{self.port}/"
+        base = f"http://{get_lan_ip()}:{self.port}/"
+        return base + (f"?k={self.token}" if self.token else "")
 
     def stop(self) -> None:
         if self._httpd is not None:
@@ -208,7 +270,9 @@ def push(frame_bgr: np.ndarray, port: int = 8765, jpeg_quality: int = 80, on_url
         if not _announced:
             _announced = True
             url = _server.url()
-            print(f"[web_stream] Phone stream live — open on your phone: {url}")
+            print(f"[web_stream] Private stream live — share ONLY this link: {url}")
+            if _server.token:
+                print("[web_stream] (the ?k=... part is the access key; without it viewers are denied)")
             if on_url is not None:
                 try:
                     on_url(url)
@@ -221,7 +285,7 @@ def push(frame_bgr: np.ndarray, port: int = 8765, jpeg_quality: int = 80, on_url
 
 
 def get_url() -> Optional[str]:
-    """Connect URL while the stream is running, else None."""
+    """Connect URL (with access key) while the stream is running, else None."""
     return _server.url() if _server is not None else None
 
 

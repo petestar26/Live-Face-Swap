@@ -29,3 +29,9 @@ switch_states.json
 install.bat
 /.claude
 *.bat
+
+# Mac junk + local sample/test photos (kept off GitHub)
+.DS_Store
+**/.DS_Store
+*.jpg
+*.jpeg

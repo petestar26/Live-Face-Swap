@@ -216,13 +216,29 @@ def enhance_face_onnx(
         output = run_inference(session, input_name, blob)
     enhanced = postprocess_face(output)
 
-    # Create mask for blending (feathered edges)
-    mask = np.ones((input_size, input_size), dtype=np.float32)
-    border = max(1, input_size // 16)
-    mask[:border, :] = np.linspace(0, 1, border)[:, np.newaxis]
-    mask[-border:, :] = np.linspace(1, 0, border)[:, np.newaxis]
-    mask[:, :border] = np.minimum(mask[:, :border], np.linspace(0, 1, border)[np.newaxis, :])
-    mask[:, -border:] = np.minimum(mask[:, -border:], np.linspace(1, 0, border)[np.newaxis, :])
+    # Elliptical (face-shaped) feathered mask. A rectangular mask leaves a
+    # visible square "frame" around the enhanced crop — the box on the face the
+    # user reported. An oval that hugs the face and feathers out blends ONLY the
+    # face region, so the enhanced skin merges seamlessly with no hard edge.
+    mask = np.zeros((input_size, input_size), dtype=np.float32)
+    cv2.ellipse(
+        mask,
+        (input_size // 2, int(input_size * 0.56)),          # GPEN aligns the face low in the crop
+        (int(input_size * 0.34), int(input_size * 0.43)),   # face-sized, kept clear of the crop edges
+        0, 0, 360, 1.0, -1,
+    )
+    # Soft bottom cutoff at the jaw, matching the swapper's cutoff so the
+    # enhancement stops exactly where the swap stops — otherwise the
+    # sharp/not-sharp boundary shows as a faint line under the chin.
+    ys = np.linspace(0.0, 1.0, input_size, dtype=np.float32).reshape(-1, 1)
+    mask *= np.clip((0.96 - ys) / (0.96 - 0.82), 0.0, 1.0)
+    # Very wide feather spreads the transition so no boundary line forms.
+    blur = max(3, (input_size // 5) | 1)
+    mask = cv2.GaussianBlur(mask, (blur, blur), 0)
+    # Partial strength: keep ~20% of the natural (un-enhanced) swapped texture so
+    # the face doesn't look airbrushed / "like makeup". Full GPEN replacement is
+    # what made the swapped face read as a smooth plastic mask.
+    mask *= 0.82
 
     h, w = frame.shape[:2]
     warped_enhanced = cv2.warpAffine(
@@ -237,4 +253,27 @@ def enhance_face_onnx(
     mask_3ch = warped_mask[:, :, np.newaxis]
     result = (warped_enhanced.astype(np.float32) * mask_3ch +
               frame.astype(np.float32) * (1.0 - mask_3ch))
+
+    # --- Grain match (the "professional" touch) ---------------------------
+    # GPEN output is extremely clean; on a webcam the un-touched skin around the
+    # face still carries sensor grain, so the enhanced face looks too smooth and
+    # reads as "pasted". Measure the frame's own fine grain and add that much
+    # noise back, but ONLY inside the face mask, so the swapped face matches the
+    # surrounding texture. Auto no-op on clean/studio frames (grain ≈ 0).
+    try:
+        # Work ONLY inside the face mask's bounding box, not the whole frame —
+        # full-frame blur + noise per frame is a real FPS/latency cost in live.
+        ys, xs = np.where(warped_mask > 0.02)
+        if xs.size:
+            gx1, gx2 = int(xs.min()), int(xs.max()) + 1
+            gy1, gy2 = int(ys.min()), int(ys.max()) + 1
+            sub = frame[gy1:gy2, gx1:gx2].astype(np.float32)
+            resid = sub - cv2.GaussianBlur(sub, (0, 0), 1.0)
+            grain_sigma = min(float(np.std(resid)), 7.0)
+            if grain_sigma >= 1.2:
+                noise = np.random.normal(0.0, grain_sigma, sub.shape).astype(np.float32)
+                result[gy1:gy2, gx1:gx2] += noise * mask_3ch[gy1:gy2, gx1:gx2]
+    except Exception:
+        pass  # grain match is best-effort; never block enhancement
+
     return np.clip(result, 0, 255).astype(np.uint8)

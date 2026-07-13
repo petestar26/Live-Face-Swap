@@ -51,25 +51,51 @@ class VideoCapturer:
                 # bandwidth-limited to ~5 fps. Setting MJPG at construction
                 # negotiates compressed frames from the first read.
                 mjpg = cv2.VideoWriter_fourcc(*'MJPG')
-                open_params = [
+                params_mjpg = [
                     cv2.CAP_PROP_FOURCC, mjpg,
                     cv2.CAP_PROP_FRAME_WIDTH, width,
                     cv2.CAP_PROP_FRAME_HEIGHT, height,
                     cv2.CAP_PROP_FPS, fps,
                 ]
-                capture_methods = [
-                    (self.device_index, cv2.CAP_DSHOW),
-                    (self.device_index, cv2.CAP_MSMF),
-                    (self.device_index, cv2.CAP_ANY),
+                # Try DSHOW+MJPG first (best for real USB webcams). Then fall back
+                # to PLAIN opens (no forced format): virtual cameras such as
+                # "DroidCam Source 3" and "OBS Virtual Camera" REJECT the forced
+                # MJPG pixel format and only open via plain DSHOW / MSMF / ANY.
+                # Without these fallbacks the app dies with "Failed to start
+                # camera" on those cameras.
+                attempts = [
+                    (cv2.CAP_DSHOW, params_mjpg),
+                    (cv2.CAP_DSHOW, None),
+                    (cv2.CAP_MSMF, None),
+                    (cv2.CAP_ANY, None),
                 ]
-
-                for dev_id, backend in capture_methods:
+                self.cap = None
+                for backend, params in attempts:
+                    cap = None
                     try:
-                        self.cap = cv2.VideoCapture(dev_id, backend, open_params)
-                        if self.cap.isOpened():
-                            break
-                        self.cap.release()
+                        cap = (
+                            cv2.VideoCapture(self.device_index, backend, params)
+                            if params is not None
+                            else cv2.VideoCapture(self.device_index, backend)
+                        )
+                        if cap.isOpened():
+                            # Some virtual cameras "open" but never deliver a
+                            # frame with the wrong API — verify a real frame
+                            # arrives before committing to this backend.
+                            for _ in range(8):
+                                ret, frame = cap.read()
+                                if ret and frame is not None and getattr(frame, "size", 0) > 0:
+                                    self.cap = cap
+                                    break
+                            if self.cap is not None:
+                                break
+                        cap.release()
                     except Exception:
+                        if cap is not None:
+                            try:
+                                cap.release()
+                            except Exception:
+                                pass
                         continue
             else:
                 # Unix-like systems (Linux/Mac) capture method
@@ -77,6 +103,15 @@ class VideoCapturer:
 
             if not self.cap or not self.cap.isOpened():
                 raise RuntimeError("Failed to open camera")
+
+            # Keep the driver buffer at 1 so read() always returns the freshest
+            # frame instead of a queued older one — cuts the lag between real
+            # speech and the swapped video (better lip-sync). Best-effort: some
+            # backends ignore it, which is harmless.
+            try:
+                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
 
             # Belt-and-braces: also set via cap.set() for backends that honor
             # post-open changes (MSMF, V4L2). DSHOW ignores these, but the

@@ -1,0 +1,993 @@
+diff --git a/SETUP_LIVE.md b/SETUP_LIVE.md
+new file mode 100644
+index 0000000..096042c
+--- /dev/null
++++ b/SETUP_LIVE.md
+@@ -0,0 +1,221 @@
++# K_P Face Swap — Live Face Swap Setup (Desktop)
++
++A complete, no-surprises guide to running **real-time webcam face swap** on a desktop PC,
++with the quality features (Match Face Color, Poisson Blend, face enhancer) enabled.
++
++> *K_P Face Swap is built on the open-source Deep-Live-Cam engine; the clone URL below still
++> points at the upstream repository.*
++
++> This guide targets **Windows + NVIDIA GPU** first (the fastest, most common setup),
++> with sections for **AMD/Intel (DirectML)** and **Linux** at the end.
++
++---
++
++## 0. Hardware — what you need (read this first)
++
++Live swap is GPU-bound. Your graphics card decides whether this is smooth or a slideshow.
++
++| Tier | GPU | Expected live FPS (1 face, 128 model) |
++|------|-----|----------------------------------------|
++| **Recommended** | NVIDIA RTX 4070 / 4080 / 4090, RTX 3080+ | 30–60+ FPS |
++| **Good** | NVIDIA RTX 3060 (12 GB) / 4060 / 2070 | 20–30 FPS |
++| **Minimum** | NVIDIA GTX 1660 / RTX 2060 (6 GB) | 12–20 FPS |
++| AMD (Windows) | RX 6700 XT+ via **DirectML** | 10–20 FPS (slower than CUDA) |
++| CPU only | any | 1–3 FPS — **not usable for live** |
++
++**Practical minimums:** NVIDIA card with **6 GB+ VRAM** (8 GB+ recommended), 16 GB system RAM,
++a recent CPU, and an SSD. A real webcam (or OBS Virtual Camera) for input.
++
++---
++
++## 1. Install prerequisites (Windows)
++
++1. **Python 3.10** (64-bit) — https://www.python.org/downloads/release/python-31011/
++   - During install: tick **"Add Python to PATH"**.
++   - ⚠️ Avoid 3.12/3.13 — `insightface` / `onnxruntime` wheels are most reliable on 3.10.
++2. **Git** — https://git-scm.com/download/win
++3. **NVIDIA driver** — latest Game Ready or Studio driver: https://www.nvidia.com/Download/index.aspx
++4. **Visual C++ Redistributable (x64)** — https://aka.ms/vs/17/release/vc_redist.x64.exe
++   (insightface needs it; skipping this is the #1 cause of import errors.)
++5. **ffmpeg** — https://www.gyan.dev/ffmpeg/builds/ → add its `bin` folder to PATH
++   (needed for video files / audio; not strictly required for pure webcam live).
++
++For NVIDIA acceleration, `onnxruntime-gpu` (installed in step 4) needs the **CUDA 12.x runtime
+++ cuDNN 9.x**. The simplest reliable route: install the **CUDA Toolkit 12.x** from
++https://developer.nvidia.com/cuda-downloads and **cuDNN 9** from
++https://developer.nvidia.com/cudnn. (You can skip these if you instead use DirectML — see §8.)
++
++---
++
++## 2. Get the code
++
++```bat
++git clone https://github.com/hacksider/Deep-Live-Cam.git
++cd Deep-Live-Cam
++```
++
++## 3. Create an isolated environment
++
++```bat
++python -m venv venv
++venv\Scripts\activate
++python -m pip install --upgrade pip
++```
++
++You should now see `(venv)` at the start of your prompt. Do everything below inside it.
++
++## 4. Install dependencies
++
++```bat
++pip install -r requirements.txt
++```
++
++`requirements.txt` already pulls **`onnxruntime-gpu`** on non-Mac systems. **Verify the GPU is
++visible to ONNX Runtime** — this single check saves hours of debugging:
++
++```bat
++python -c "import onnxruntime as ort; print(ort.get_available_providers())"
++```
++
++✅ You want to see **`CUDAExecutionProvider`** in the list (or `DmlExecutionProvider` for AMD/Intel).
++If you only see `CPUExecutionProvider`, jump to **Troubleshooting → CUDA not detected** (§9).
++
++## 5. Download the models
++
++Put these two files in the **`models/`** folder:
++
++- **Swap model** — `inswapper_128_fp16.onnx`
++  https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128_fp16.onnx?download=true
++- **Face enhancer** — `GFPGANv1.4.pth`
++  https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth
++
++> The app also auto-downloads `inswapper_128.onnx` on first run if missing. GPEN enhancer
++> weights download automatically the first time you select them in the UI.
++
++---
++
++## 6. First launch
++
++**NVIDIA:**
++```bat
++python run.py --execution-provider cuda
++```
++(There's a convenience script too: `run-cuda.bat`.)
++
++The GUI opens. On first run it may download/optimize the model — wait for
++"Face swapper model loaded successfully." in the console.
++
++---
++
++## 7. Do a live webcam swap (the actual workflow)
++
++1. **Select Source** → pick a clear, front-facing photo of the face you want to wear.
++   (Good lighting, both eyes visible, no heavy occlusion = best result.)
++2. Click **Live** (webcam preview window opens).
++3. Look at the camera. The swap runs in real time.
++
++### Turn on the quality features (recommended order)
++In the controls panel:
++
++- ✅ **Match Face Color** *(new)* — matches the swapped face's skin tone/lighting to **you**,
++  so there's no color seam. Computed on the face region only for an accurate match.
++- 🎚️ **Color Match slider** *(new, Refinement card)* — dials that match from 0% (raw swap) to
++  100% (full match). Start at 100%; lower it if the target lighting is strongly colored and you
++  want to keep some of it.
++- ✅ **Poisson Blend** — smooths the face-edge boundary into your skin.
++- **Face Enhancer → GPEN-512** (or GFPGAN) — restores fine detail/sharpness.
++- **Refinement sliders** — small **Sharpness**, keep **Mouth Mask** off unless you need your
++  real mouth to show through.
++
++> **For your stated goal (removing the color/lighting seam):**
++> **Match Face Color + Poisson Blend** is the combination. Match Face Color removes the *tone*
++> difference; Poisson Blend removes the *edge*. Enable both.
++
++Tip: enabling the **Face Enhancer** costs the most FPS. If live gets choppy, set it to **None**
++or **GPEN-256** while live, and use GPEN-512 only when exporting a video.
++
++---
++
++## 8. Use the swap in Zoom / Meet / Teams / OBS
++
++The live window is local. To pipe it into a meeting app, use a **virtual camera**:
++
++1. Install **OBS Studio** (https://obsproject.com) → it provides "OBS Virtual Camera".
++2. In OBS: add a **Window Capture** (or **Display Capture**) of the Deep-Live-Cam live window.
++3. Click **Start Virtual Camera** in OBS.
++4. In Zoom/Meet/Teams, choose **"OBS Virtual Camera"** as your webcam.
++
++---
++
++## 8b. Watch the swap on your phone 📱
++
++**Important:** a phone **cannot run the swap itself** — it has no CUDA GPU and the models are
++too heavy for real-time. The realistic and reliable setup is: **the desktop does the work, the
++phone just watches** the result over your Wi-Fi. Two ways:
++
++### Easiest — built-in web stream (no extra software)
++1. Make sure the desktop and phone are on the **same Wi-Fi**.
++2. In the app, tick **"Stream to Phone (Web)"**, then click **Live**.
++3. The console prints a URL like `http://192.168.1.42:8765/`.
++4. Open that URL in your phone's browser (Safari/Chrome). Tap the image for fullscreen.
++
++That's a live, low-latency MJPEG view of the swap on your phone. (It's view-only — controls
++stay on the desktop. If the page doesn't load, allow port **8765** through the desktop firewall.)
++
++### For phone video calls (WhatsApp / Instagram / etc.)
++The web view above is great for *watching*, but phone apps only accept the phone's own camera.
++To get the swap **into** a phone call you'd route the desktop's virtual camera (§8) into a phone
++via a camera-bridge app (e.g. **DroidCam/Iriun** in reverse, or **OBS + NDI**), or simply join
++the call **from the desktop** instead — which is far simpler and higher quality.
++
++> Bottom line: use a desktop with a good NVIDIA GPU as the engine; use the phone as a **screen**
++> (web stream) or join calls from the desktop. Trying to run the model on the phone is not viable.
++
++---
++
++## 9. Troubleshooting
++
++**"CUDA not detected" / only `CPUExecutionProvider` shows / runs at ~2 FPS**
++- Update the NVIDIA driver.
++- Ensure **CUDA 12.x** + **cuDNN 9.x** are installed and on PATH.
++- Confirm GPU `onnxruntime`: `pip uninstall onnxruntime onnxruntime-gpu -y && pip install onnxruntime-gpu`.
++- Re-check: `python -c "import onnxruntime as ort; print(ort.get_available_providers())"`.
++- If CUDA is a hassle, use **DirectML** instead (works on any DX12 GPU incl. AMD/Intel):
++  `pip install onnxruntime-directml` then `python run.py --execution-provider dml`.
++
++**`ImportError` / DLL load failed (insightface)** → install the **Visual C++ x64 Redistributable** (§1.4).
++
++**No face detected** → use a clearer, larger, front-facing source photo; improve your lighting.
++
++**Out of memory (VRAM)** → close other GPU apps; set Face Enhancer to None/GPEN-256; lower webcam resolution.
++
++**Choppy / low FPS** → Face Enhancer = None while live; ensure CUDA (not CPU); close background apps;
++lower the webcam resolution to 720p.
++
++**Colors look washed out / wrong tone** → that's exactly what **Match Face Color** fixes — enable it.
++
++---
++
++## 10. Other platforms (quick notes)
++
++**AMD / Intel GPU (Windows, DirectML):**
++```bat
++pip install onnxruntime-directml
++python run.py --execution-provider dml     :: or run-directml.bat
++```
++
++**Linux (NVIDIA):**
++```bash
++python3 -m venv venv && source venv/bin/activate
++pip install -r requirements.txt
++python run.py --execution-provider cuda
++```
++Install the matching NVIDIA driver + CUDA 12.x + cuDNN 9.x from your distro / NVIDIA.
++
++---
++
++## 11. Responsible use
++
++This is a deepfake tool. Only swap faces with **consent**, follow the laws where you live, and
++respect the platform rules of any service you stream into. Don't use it to deceive, harass, or
++impersonate. The project ships an NSFW filter and a disclaimer — keep them intact.
+diff --git a/START_HERE_LENOVO.md b/START_HERE_LENOVO.md
+new file mode 100644
+index 0000000..7b49112
+--- /dev/null
++++ b/START_HERE_LENOVO.md
+@@ -0,0 +1,64 @@
++# START HERE — K_P Face Swap on Lenovo LOQ 15AHP10
++
++Your machine: **Ryzen 7 250 · RTX 5050 8GB (Blackwell) · 32GB DDR5 · 512GB NVMe · Win 11**.
++This is a strong setup. Follow this once and you're live. Full reference: `SETUP_LIVE.md`.
++
++## 0. Do these 3 machine-specific things first
++1. **Used machine → clean-reinstall Windows 11** (97GB was the previous owner's). Security + a fresh
++   start. Your license is digital and reactivates automatically.
++2. **Hybrid graphics (RTX 5050 + Radeon 780M):** Windows → *Settings → Display → Graphics* → add
++   `python.exe` → **High performance (NVIDIA)**. If Lenovo Vantage has a **dGPU/Hybrid** setting,
++   pick dedicated dGPU when plugged in.
++3. **Blackwell is new → newest NVIDIA driver (570+) + CUDA 12.8+.** Don't use an older
++   `onnxruntime-gpu` than the pinned one — it won't run on a 50-series GPU.
++
++## 1. Install
++```bat
++:: prerequisites: Python 3.10 (add to PATH), Git, VC++ x64 Redistributable, ffmpeg
++git clone https://github.com/hacksider/Deep-Live-Cam.git
++cd Deep-Live-Cam
++git apply path\to\deeplivecam_quality.patch    :: my changes + the K_P Face Swap rebrand
++python -m venv venv && venv\Scripts\activate
++python -m pip install --upgrade pip
++pip install -r requirements.txt
++```
++
++## 2. The one check that proves the GPU works
++```bat
++python -c "import onnxruntime as ort; print(ort.get_available_providers())"
++```
++Must list **`CUDAExecutionProvider`**. If not, fix drivers/CUDA before going further (see
++`SETUP_LIVE.md` §9). Anything else means you'd be on CPU = 2 FPS.
++
++## 3. Models → `models/`
++- `inswapper_128_fp16.onnx` — https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128_fp16.onnx?download=true
++- `GFPGANv1.4.pth` — https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth
++
++## 4. Run
++```bat
++python run.py --execution-provider cuda
++```
++
++## 5. Recommended preset for your RTX 5050 (8GB)
++You have the VRAM for full quality. Set:
++
++| Control | Value | Why |
++|---|---|---|
++| **Match Face Color** | ON, strength **100%** | removes the color/lighting seam |
++| **Poisson Blend** | ON | smooths the face-edge boundary |
++| **Face Enhancer** | **GPEN-512** | restores detail (8GB handles it) |
++| **Sharpness** | ~0.5 | light crispness |
++| **Stream to Phone (Web)** | ON if you want to watch on your phone | URL appears in the status bar |
++| Mouth Mask | off | unless you need your real mouth |
++| Many faces | off | single face = best FPS/VRAM |
++| Webcam | 720p | smooth live |
++
++**Expected:** ~30–40 FPS (Match Color + Poisson), ~20–28 FPS with GPEN-512 on.
++**If it stutters:** Enhancer → **GPEN-256** first, then drop webcam to 720p.
++
++## 6. Watch it on your phone
++Tick **Stream to Phone (Web)** → click **Live** → the status bar shows
++`http://<your-ip>:8765/`. Open that in your phone's browser (same Wi-Fi). Allow port **8765**
++through Windows Firewall the first time.
++
++> Use only with consent; follow your local laws and each platform's rules.
+diff --git a/modules/enhanced_face_swapper.py b/modules/enhanced_face_swapper.py
+new file mode 100644
+index 0000000..986dc19
+--- /dev/null
++++ b/modules/enhanced_face_swapper.py
+@@ -0,0 +1,207 @@
++"""
++enhanced_face_swapper.py — high-quality post-processing helpers for face swaps.
++
++This is a *corrected, dependency-light* rework of the commonly-shared
++"EnhancedFaceSwapper" snippet. It fixes the bugs in that snippet and adapts it to
++this repo, which already runs on Apple Silicon (CoreML) and ships GPEN enhancers:
++
++  * device is auto-detected (cuda -> mps -> cpu) instead of hardcoded to 'cuda';
++  * GFPGAN is loaded lazily and uses the correct API (BGR in, 3-tuple out) — it is
++    OPTIONAL and absence never crashes the module;
++  * CodeFormer's `from codeformer import CodeFormer` is NOT a real pip API, so it is
++    not imported by default;
++  * the sharpen step uses a proper unsharp mask (blend), not a kernel scaled past
++    unity gain (which only brightened the image);
++  * temporal smoothing is motion-guarded: averaging a *moving* face produces ghosting,
++    so the history is reset when the face shifts, giving anti-flicker without smearing;
++  * color/lighting matching reuses this repo's already-validated LAB transfer.
++
++Recommended path for the in-app swap is the built-in `face_color_match` toggle (wired
++into modules/processors/frame/face_swapper.swap_face). This module is for scripts /
++custom pipelines that want the same quality primitives in one place.
++"""
++
++from collections import deque
++from typing import Callable, Optional, Tuple
++
++import cv2
++import numpy as np
++
++# Reuse the repo's robust LAB mean/std color transfer (handles bad input, div-by-zero).
++from modules.processors.frame.face_swapper import apply_color_transfer
++
++
++def detect_device() -> str:
++    """Return the best available torch device string: 'cuda', 'mps', or 'cpu'."""
++    try:
++        import torch
++        if torch.cuda.is_available():
++            return "cuda"
++        if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
++            return "mps"
++    except Exception:
++        pass
++    return "cpu"
++
++
++class EnhancedFaceSwapper:
++    def __init__(
++        self,
++        device: Optional[str] = None,
++        history_length: int = 4,
++        sharpen_strength: float = 0.6,
++        restore_strength: float = 0.7,
++        use_gfpgan: bool = False,
++        gfpgan_model_path: str = "models/GFPGANv1.4.pth",
++        motion_threshold: float = 0.06,
++        restorer: Optional[Callable[[np.ndarray], np.ndarray]] = None,
++    ):
++        """
++        device            'cuda'|'mps'|'cpu'|None(auto)
++        history_length    frames kept for temporal anti-flicker
++        sharpen_strength  unsharp-mask amount, 0..~1.5 (0 disables)
++        restore_strength  blend weight of the restored face, 0..1
++        use_gfpgan        lazily load GFPGAN for face restoration (optional)
++        motion_threshold  fraction of face size; if the face moves more than this
++                          between frames the temporal history is reset (no ghosting)
++        restorer          optional custom callable(face_bgr)->face_bgr; takes priority
++                          over GFPGAN. Use to plug in this repo's GPEN enhancer.
++        """
++        self.device = device or detect_device()
++        self.history: deque = deque(maxlen=max(1, history_length))
++        self.sharpen_strength = float(sharpen_strength)
++        self.restore_strength = float(np.clip(restore_strength, 0.0, 1.0))
++        self.motion_threshold = float(motion_threshold)
++        self._last_center: Optional[Tuple[float, float]] = None
++
++        self.restorer = restorer
++        self.gfpgan = None
++        if use_gfpgan and restorer is None:
++            self._init_gfpgan(gfpgan_model_path)
++
++    # ------------------------------------------------------------------ restoration
++    def _init_gfpgan(self, model_path: str) -> None:
++        """Lazily construct a GFPGANer. Never raises — absence just disables restore."""
++        try:
++            from gfpgan import GFPGANer
++            self.gfpgan = GFPGANer(model_path=model_path, upscale=1, device=self.device)
++        except Exception as e:  # pragma: no cover - depends on optional install
++            print(f"[EnhancedFaceSwapper] GFPGAN unavailable, restoration disabled: {e}")
++            self.gfpgan = None
++
++    def enhance_face(self, face_bgr: np.ndarray) -> np.ndarray:
++        """Restore a (BGR uint8) face crop. Returns input unchanged if no restorer."""
++        if self.restorer is not None:
++            try:
++                return self.restorer(face_bgr)
++            except Exception as e:
++                print(f"[EnhancedFaceSwapper] custom restorer failed: {e}")
++                return face_bgr
++        if self.gfpgan is not None:
++            try:
++                # GFPGANer.enhance takes BGR and returns (cropped_faces, restored_faces, restored_img)
++                _, _, restored = self.gfpgan.enhance(
++                    face_bgr, has_aligned=False, only_center_face=True, paste_back=True
++                )
++                if restored is not None:
++                    if restored.shape[:2] != face_bgr.shape[:2]:
++                        restored = cv2.resize(restored, (face_bgr.shape[1], face_bgr.shape[0]))
++                    if self.restore_strength >= 1.0:
++                        return restored
++                    return cv2.addWeighted(
++                        face_bgr, 1.0 - self.restore_strength, restored, self.restore_strength, 0
++                    )
++            except Exception as e:
++                print(f"[EnhancedFaceSwapper] GFPGAN enhance failed: {e}")
++        return face_bgr
++
++    # ------------------------------------------------------------------ color match
++    @staticmethod
++    def match_color(source_bgr: np.ndarray, target_bgr: np.ndarray) -> np.ndarray:
++        """Match `source` color/lighting to `target` (LAB mean/std transfer)."""
++        return apply_color_transfer(source_bgr, target_bgr)
++
++    # ------------------------------------------------------------------ sharpen
++    def sharpen(self, img_bgr: np.ndarray) -> np.ndarray:
++        """Unsharp mask. Amount 0 -> unchanged; preserves overall brightness."""
++        if self.sharpen_strength <= 0.0:
++            return img_bgr
++        blurred = cv2.GaussianBlur(img_bgr, (0, 0), sigmaX=1.5)
++        # out = img + amount*(img - blurred), via addWeighted (unity gain preserved)
++        return cv2.addWeighted(img_bgr, 1.0 + self.sharpen_strength, blurred, -self.sharpen_strength, 0)
++
++    # ------------------------------------------------------------------ temporal
++    def _temporal_smooth(self, face_bgr: np.ndarray, center: Tuple[float, float],
++                         face_size: float) -> np.ndarray:
++        """Average recent face crops for anti-flicker, but reset on large motion.
++
++        Averaging a moving face smears it (ghosting). We therefore drop the history
++        whenever the face center moves more than `motion_threshold * face_size`, and
++        only average while the face is roughly still.
++        """
++        if self._last_center is not None and face_size > 0:
++            moved = np.hypot(center[0] - self._last_center[0], center[1] - self._last_center[1])
++            if moved > self.motion_threshold * face_size:
++                self.history.clear()
++        self._last_center = center
++
++        cur = face_bgr.astype(np.float32)
++        # keep history homogeneous in size
++        if self.history and self.history[-1].shape != cur.shape:
++            self.history.clear()
++        self.history.append(cur)
++        if len(self.history) == 1:
++            return face_bgr
++        avg = np.mean(self.history, axis=0)
++        return np.clip(avg, 0, 255).astype(np.uint8)
++
++    # ------------------------------------------------------------------ merge
++    def merge(
++        self,
++        swapped_face: np.ndarray,
++        original_frame: np.ndarray,
++        mask: np.ndarray,
++        target_box: Tuple[int, int, int, int],
++        do_color_match: bool = True,
++        do_restore: bool = True,
++        do_sharpen: bool = True,
++        do_temporal: bool = True,
++    ) -> np.ndarray:
++        """Composite `swapped_face` into `original_frame` at `target_box` (x1,y1,x2,y2).
++
++        `mask` is a single-channel (HxW, uint8 or float) face mask in swapped_face space.
++        Returns a new frame (original is not modified).
++        """
++        x1, y1, x2, y2 = (int(v) for v in target_box)
++        H, W = original_frame.shape[:2]
++        x1, y1 = max(0, x1), max(0, y1)
++        x2, y2 = min(W, x2), min(H, y2)
++        if x2 <= x1 or y2 <= y1:
++            return original_frame
++        bw, bh = x2 - x1, y2 - y1
++
++        face = cv2.resize(swapped_face, (bw, bh))
++        roi = original_frame[y1:y2, x1:x2]
++
++        if do_temporal:
++            center = ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
++            face = self._temporal_smooth(face, center, float(max(bw, bh)))
++
++        if do_color_match:
++            face = self.match_color(face, roi)
++        if do_restore:
++            face = self.enhance_face(face)
++        if do_sharpen:
++            face = self.sharpen(face)
++
++        # feathered alpha blend
++        m = cv2.resize(mask, (bw, bh)).astype(np.float32)
++        if m.max() > 1.0:
++            m /= 255.0
++        m = cv2.GaussianBlur(m, (0, 0), sigmaX=max(1.0, min(bw, bh) / 40.0))
++        m = m[..., None]
++
++        blended = face.astype(np.float32) * m + roi.astype(np.float32) * (1.0 - m)
++        result = original_frame.copy()
++        result[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
++        return result
+diff --git a/modules/globals.py b/modules/globals.py
+index 3d88931..8c5c6ef 100644
+--- a/modules/globals.py
++++ b/modules/globals.py
+@@ -29,6 +29,9 @@ many_faces: bool = False         # Process all detected faces with default sourc
+ map_faces: bool = False          # Use source_target_map or simple_map for specific swaps
+ poisson_blend: bool = False      # Enable Poisson Blending for smoother face swaps
+ color_correction: bool = False   # Enable color correction (implementation specific)
++face_color_match: bool = False   # Match swapped-face color/lighting to the target face (LAB transfer)
++face_color_match_strength: float = 1.0  # 0..1 blend of the color-matched face over the raw swap
++web_stream: bool = False         # Stream the live output over HTTP so a phone/browser can view it
+ nsfw_filter: bool = False
+ 
+ # Video Output Options
+diff --git a/modules/metadata.py b/modules/metadata.py
+index 9bc9ba9..337a8b7 100644
+--- a/modules/metadata.py
++++ b/modules/metadata.py
+@@ -1,3 +1,3 @@
+-name = 'Deep-Live-Cam'
++name = 'K_P Face Swap'
+ version = '2.1.5'
+-edition = 'GitHub Edition'
+\ No newline at end of file
++edition = ''
+\ No newline at end of file
+diff --git a/modules/processors/frame/face_swapper.py b/modules/processors/frame/face_swapper.py
+index 7559af6..7ba1cb3 100644
+--- a/modules/processors/frame/face_swapper.py
++++ b/modules/processors/frame/face_swapper.py
+@@ -552,6 +552,27 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+         if not isinstance(bgr_fake, np.ndarray):
+             return original_frame
+ 
++        # --- Optional: match the swapped face's color/lighting to the target ---
++        # inswapper preserves the SOURCE identity's skin tone, which can clash with
++        # the target's lighting and leave a visible seam. Recolor the aligned swap
++        # (bgr_fake) toward the aligned target face's LAB statistics before paste-back.
++        if getattr(modules.globals, "face_color_match", False):
++            try:
++                fh, fw = bgr_fake.shape[:2]
++                aligned_target = cv2.warpAffine(temp_frame, M, (fw, fh))
++                # Restrict color stats to the face ellipse (same cached template the
++                # paste-back uses) so crop-border pixels don't skew the skin-tone match.
++                cm_mask = np.where(_get_soft_alpha(fh) > 127, np.uint8(255), np.uint8(0))
++                matched = apply_color_transfer(bgr_fake, aligned_target, mask=cm_mask)
++                # Strength lets the user dial the correction (0 = raw swap, 1 = full match).
++                strength = max(0.0, min(1.0, float(getattr(modules.globals, "face_color_match_strength", 1.0))))
++                if strength >= 1.0:
++                    bgr_fake = matched
++                elif strength > 0.0:
++                    bgr_fake = cv2.addWeighted(bgr_fake, 1.0 - strength, matched, strength, 0)
++            except Exception:
++                pass  # color match is best-effort; never block the swap
++
+         # Pass a dummy aimg with correct shape — _fast_paste_back only uses aimg.shape
+         # to create the white mask. Avoids redundant norm_crop2 (~0.6ms).
+         _face_size = face_swapper.input_size[0]
+@@ -1487,9 +1508,14 @@ def create_face_mask(face: Face, frame: Frame) -> np.ndarray:
+     return mask # Return uint8 mask
+ 
+ 
+-def apply_color_transfer(source, target):
++def apply_color_transfer(source, target, mask=None):
+     """
+     Apply color transfer using LAB color space. Handles potential division by zero and ensures output is uint8.
++
++    mask(None)  optional single-channel uint8 HxW (same size as source/target). When
++                given, LAB statistics are computed ONLY over masked (non-zero) pixels,
++                so non-skin border pixels in an aligned crop don't skew the match —
++                this tightens the color seam at the face boundary.
+     """
+     # Input validation
+     if source is None or target is None or source.size == 0 or target.size == 0:
+@@ -1530,8 +1556,20 @@ def apply_color_transfer(source, target):
+         target_lab = cv2.cvtColor(target_float, cv2.COLOR_BGR2LAB)
+ 
+         # Compute statistics
+-        source_mean, source_std = cv2.meanStdDev(source_lab)
+-        target_mean, target_std = cv2.meanStdDev(target_lab)
++        # Restrict statistics to the masked (face) region when a mask is supplied —
++        # falls back to whole-image stats if the mask is empty/mismatched.
++        stat_mask = None
++        if mask is not None:
++            try:
++                if mask.shape[:2] == source_lab.shape[:2]:
++                    stat_mask = mask if mask.dtype == np.uint8 else mask.astype(np.uint8)
++                    if cv2.countNonZero(stat_mask) < 16:
++                        stat_mask = None
++            except Exception:
++                stat_mask = None
++
++        source_mean, source_std = cv2.meanStdDev(source_lab, mask=stat_mask)
++        target_mean, target_std = cv2.meanStdDev(target_lab, mask=stat_mask)
+ 
+         # Reshape for broadcasting
+         source_mean = source_mean.reshape((1, 1, 3))
+@@ -1544,8 +1582,12 @@ def apply_color_transfer(source, target):
+         source_std = np.maximum(source_std, epsilon)
+         # target_std = np.maximum(target_std, epsilon) # Target std can be small
+ 
+-        # Perform color transfer in LAB space
+-        result_lab = (source_lab - source_mean) * (target_std / source_std) + target_mean
++        # Perform color transfer in LAB space.
++        # NOTE: cv2.meanStdDev returns float64, which would promote result_lab to
++        # float64 — and cv2.cvtColor(LAB2BGR) rejects CV_64F, raising cv2.error that
++        # the handler below silently swallows (making this whole function a no-op).
++        # Cast back to float32 so the conversion (and thus the transfer) actually runs.
++        result_lab = ((source_lab - source_mean) * (target_std / source_std) + target_mean).astype(np.float32)
+ 
+         # --- No explicit clipping needed in LAB space typically ---
+         # Clipping is handled implicitly by the conversion back to BGR and then to uint8
+diff --git a/modules/ui.py b/modules/ui.py
+index fca9f30..12b993f 100644
+--- a/modules/ui.py
++++ b/modules/ui.py
+@@ -306,6 +306,8 @@ def save_switch_states():
+         "map_faces": modules.globals.map_faces,
+         "poisson_blend": modules.globals.poisson_blend,
+         "color_correction": modules.globals.color_correction,
++        "face_color_match": modules.globals.face_color_match,
++        "web_stream": modules.globals.web_stream,
+         "nsfw_filter": modules.globals.nsfw_filter,
+         "live_mirror": modules.globals.live_mirror,
+         "live_resizable": modules.globals.live_resizable,
+@@ -333,6 +335,8 @@ def load_switch_states():
+         modules.globals.map_faces = state.get("map_faces", False)
+         modules.globals.poisson_blend = state.get("poisson_blend", False)
+         modules.globals.color_correction = state.get("color_correction", False)
++        modules.globals.face_color_match = state.get("face_color_match", False)
++        modules.globals.web_stream = state.get("web_stream", False)
+         modules.globals.nsfw_filter = state.get("nsfw_filter", False)
+         modules.globals.live_mirror = state.get("live_mirror", False)
+         modules.globals.live_resizable = state.get("live_resizable", False)
+@@ -469,7 +473,7 @@ class MainWindow(QMainWindow):
+         self._destroy_cb = destroy_cb
+ 
+         self.setWindowTitle(
+-            f"{modules.metadata.name} {modules.metadata.version} {modules.metadata.edition}"
++            f"{modules.metadata.name} {modules.metadata.version} {modules.metadata.edition}".strip()
+         )
+         self.setMinimumSize(ROOT_WIDTH, ROOT_HEIGHT)
+         self.resize(ROOT_WIDTH, ROOT_HEIGHT)
+@@ -501,7 +505,7 @@ class MainWindow(QMainWindow):
+         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+         layout.addWidget(self._status_label)
+ 
+-        footer = QLabel("Deep Live Cam")
++        footer = QLabel("K_P Face Swap")
+         footer.setObjectName("linkLabel")
+         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+         footer.setCursor(Qt.CursorShape.PointingHandCursor)
+@@ -592,6 +596,10 @@ class MainWindow(QMainWindow):
+                                "Blend face edges smoothly using Poisson blending")
+         self.sw_color_fix = make("color_correction", "Fix Blueish Cam",
+                                  "Fix blue/green color cast from some webcams")
++        self.sw_face_color = make("face_color_match", "Match Face Color",
++                                  "Match the swapped face's color/lighting to the target face")
++        self.sw_web_stream = make("web_stream", "Stream to Phone (Web)",
++                                  "Serve the live output over Wi-Fi; open the printed URL on your phone's browser")
+         self.sw_show_fps = make("show_fps", "Show FPS",
+                                 "Display frames-per-second counter on the live preview")
+ 
+@@ -606,13 +614,17 @@ class MainWindow(QMainWindow):
+             self.sw_keep_frames, self.sw_many_faces,
+             self.sw_map_faces, self.sw_show_fps,
+             self.sw_poisson, self.sw_color_fix,
++            self.sw_face_color, self.sw_web_stream,
+         ]
+         for i, w in enumerate(items):
+             grid.addWidget(w, i // 2, i % 2)
+ 
+-        # Face enhancer dropdown
++        # Face enhancer dropdown — place on the row AFTER the last switch row.
++        # ceil(len/2) handles odd switch counts (a lone switch on the last row
++        # would otherwise share a cell with this label).
++        enhancer_row = (len(items) + 1) // 2
+         enhancer_label = QLabel(_("Face Enhancer:"))
+-        grid.addWidget(enhancer_label, len(items) // 2, 0)
++        grid.addWidget(enhancer_label, enhancer_row, 0)
+ 
+         self.cb_enhancer = QComboBox()
+         self.cb_enhancer.addItems(["None", "GFPGAN", "GPEN-512", "GPEN-256"])
+@@ -626,7 +638,7 @@ class MainWindow(QMainWindow):
+         self.cb_enhancer.setCurrentText(initial)
+         self.cb_enhancer.currentTextChanged.connect(self._on_enhancer_change)
+         self.cb_enhancer.setToolTip(_("Select a face enhancement model (None = no enhancement)"))
+-        grid.addWidget(self.cb_enhancer, len(items) // 2, 1)
++        grid.addWidget(self.cb_enhancer, enhancer_row, 1)
+ 
+         return card
+ 
+@@ -659,6 +671,15 @@ class MainWindow(QMainWindow):
+         self.s_sharpness.setToolTip(_("Sharpen the enhanced face output"))
+         grid.addWidget(self.s_sharpness, 1, 1)
+ 
++        # Color Match Strength — how strongly to pull the swapped face toward the
++        # target's color/lighting (only has effect when "Match Face Color" is on).
++        grid.addWidget(QLabel(_("Color Match")), 3, 0)
++        self.s_color_match = slider(0.0, 1.0, 1.0, 100, self._on_color_match_strength_change)
++        self.s_color_match.setToolTip(
++            _("Strength of Match Face Color (0% = raw swap, 100% = full match to target)")
++        )
++        grid.addWidget(self.s_color_match, 3, 1)
++
+         # Mouth mask — always starts at 0 (disabled) on launch
+         grid.addWidget(QLabel(_("Mouth Mask")), 2, 0)
+         self.s_mouth = slider(0.0, 100.0, 0.0, 1,
+@@ -848,6 +869,10 @@ class MainWindow(QMainWindow):
+         modules.globals.sharpness = value
+         update_status(f"Sharpness set to {value:.1f}")
+ 
++    def _on_color_match_strength_change(self, value: float) -> None:
++        modules.globals.face_color_match_strength = value
++        update_status(f"Color match strength set to {int(value * 100)}%")
++
+     def _on_mouth_mask_change(self, value: float) -> None:
+         modules.globals.mouth_mask_size = value
+         modules.globals.mouth_mask = value > 0
+@@ -1158,6 +1183,19 @@ class _ProcessingWorker(QThread):
+                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2,
+                 )
+ 
++            # Mirror the live output to a phone/browser over Wi-Fi when enabled.
++            # push() lazily starts the server and is fully self-guarded; the URL is
++            # shown once in the status bar (update_status is Signal-based = thread-safe).
++            if modules.globals.web_stream:
++                try:
++                    import modules.web_stream as _web_stream
++                    _web_stream.push(
++                        temp_frame,
++                        on_url=lambda u: update_status(f"📱 Phone stream ready — open {u} in your phone's browser"),
++                    )
++                except Exception:
++                    pass
++
+             try:
+                 self._pq.put_nowait(temp_frame)
+             except queue.Full:
+diff --git a/modules/web_stream.py b/modules/web_stream.py
+new file mode 100644
+index 0000000..b9cc786
+--- /dev/null
++++ b/modules/web_stream.py
+@@ -0,0 +1,238 @@
++"""
++web_stream.py — view the live face swap on your phone (or any browser) over Wi-Fi.
++
++Phones can't run the swap model themselves (no CUDA, heavy weights), so the desktop does
++all the work and *streams the result*. This is a tiny, dependency-free MJPEG-over-HTTP
++server (Python stdlib + OpenCV, both already required) that any device on the same network
++can open in a browser:
++
++    http://<desktop-lan-ip>:8765/
++
++Usage from the app (already wired behind the "Stream to Phone" toggle):
++
++    import modules.web_stream as web_stream
++    web_stream.push(frame_bgr)     # call each processed frame; lazily starts the server
++    web_stream.stop()              # optional; daemon thread also dies with the process
++
++Or standalone:
++
++    srv = WebStreamServer(port=8765); srv.start(); print(srv.url())
++    srv.update_frame(frame_bgr); ...; srv.stop()
++"""
++
++import socket
++import threading
++from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
++from typing import Optional
++
++import cv2
++import numpy as np
++
++_BOUNDARY = "frame"
++
++
++def get_lan_ip() -> str:
++    """Best-effort LAN IP of this machine (the address a phone should connect to)."""
++    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
++    try:
++        s.connect(("8.8.8.8", 80))  # no packets actually sent; picks the routed iface
++        return s.getsockname()[0]
++    except Exception:
++        return "127.0.0.1"
++    finally:
++        s.close()
++
++
++class _FrameBuffer:
++    """Holds the most recent JPEG-encoded frame and wakes streaming clients on update."""
++
++    def __init__(self):
++        self._cond = threading.Condition()
++        self._jpeg: Optional[bytes] = None
++        self._seq = 0
++
++    def update(self, jpeg: bytes) -> None:
++        with self._cond:
++            self._jpeg = jpeg
++            self._seq += 1
++            self._cond.notify_all()
++
++    def latest(self) -> Optional[bytes]:
++        with self._cond:
++            return self._jpeg
++
++    def wait_for(self, last_seq: int, timeout: float = 5.0):
++        """Block until a frame newer than last_seq arrives; return (jpeg, seq) or (None, seq)."""
++        with self._cond:
++            if self._seq == last_seq:
++                self._cond.wait(timeout)
++            return self._jpeg, self._seq
++
++
++_PAGE = (
++    "<!doctype html><html><head><meta charset='utf-8'>"
++    "<meta name='viewport' content='width=device-width,initial-scale=1,"
++    "maximum-scale=1,user-scalable=no'>"
++    "<title>K_P Face Swap</title>"
++    "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
++    "img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}"
++    "</style></head><body>"
++    "<img src='/stream.mjpg' alt='live' onclick=\"if(document.fullscreenElement)"
++    "document.exitFullscreen();else document.documentElement.requestFullscreen();\">"
++    "</body></html>"
++).encode("utf-8")
++
++
++def _make_handler(buffer: _FrameBuffer):
++    class Handler(BaseHTTPRequestHandler):
++        protocol_version = "HTTP/1.1"
++
++        def log_message(self, *args):  # silence per-request console spam
++            pass
++
++        def _no_store(self):
++            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
++
++        def do_GET(self):
++            if self.path in ("/", "/index.html"):
++                self.send_response(200)
++                self.send_header("Content-Type", "text/html; charset=utf-8")
++                self.send_header("Content-Length", str(len(_PAGE)))
++                self._no_store()
++                self.end_headers()
++                self.wfile.write(_PAGE)
++                return
++
++            if self.path.startswith("/snapshot"):
++                jpeg = buffer.latest()
++                if jpeg is None:
++                    self.send_error(503, "no frame yet")
++                    return
++                self.send_response(200)
++                self.send_header("Content-Type", "image/jpeg")
++                self.send_header("Content-Length", str(len(jpeg)))
++                self._no_store()
++                self.end_headers()
++                self.wfile.write(jpeg)
++                return
++
++            if self.path.startswith("/stream.mjpg"):
++                self.send_response(200)
++                self.send_header(
++                    "Content-Type", f"multipart/x-mixed-replace; boundary={_BOUNDARY}"
++                )
++                self._no_store()
++                self.end_headers()
++                seq = 0
++                try:
++                    while True:
++                        jpeg, seq = buffer.wait_for(seq, timeout=5.0)
++                        if jpeg is None:
++                            continue
++                        self.wfile.write(b"--" + _BOUNDARY.encode() + b"\r\n")
++                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
++                        self.wfile.write(
++                            b"Content-Length: " + str(len(jpeg)).encode() + b"\r\n\r\n"
++                        )
++                        self.wfile.write(jpeg)
++                        self.wfile.write(b"\r\n")
++                except (BrokenPipeError, ConnectionResetError, OSError):
++                    return  # client (phone) closed the tab — normal
++                return
++
++            self.send_error(404)
++
++    return Handler
++
++
++class WebStreamServer:
++    def __init__(self, host: str = "0.0.0.0", port: int = 8765, jpeg_quality: int = 80):
++        self.host = host
++        self.port = int(port)
++        self.jpeg_quality = int(np.clip(jpeg_quality, 10, 100))
++        self._buffer = _FrameBuffer()
++        self._httpd: Optional[ThreadingHTTPServer] = None
++        self._thread: Optional[threading.Thread] = None
++
++    def start(self) -> "WebStreamServer":
++        if self._httpd is not None:
++            return self
++        self._httpd = ThreadingHTTPServer((self.host, self.port), _make_handler(self._buffer))
++        self._httpd.daemon_threads = True
++        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
++        self._thread.start()
++        return self
++
++    def update_frame(self, frame_bgr: np.ndarray) -> None:
++        if frame_bgr is None or self._httpd is None:
++            return
++        ok, buf = cv2.imencode(
++            ".jpg", frame_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
++        )
++        if ok:
++            self._buffer.update(buf.tobytes())
++
++    def url(self) -> str:
++        return f"http://{get_lan_ip()}:{self.port}/"
++
++    def stop(self) -> None:
++        if self._httpd is not None:
++            try:
++                self._httpd.shutdown()
++                self._httpd.server_close()
++            except Exception:
++                pass
++            self._httpd = None
++
++
++# ----------------------------------------------------------------- module singleton
++_server: Optional[WebStreamServer] = None
++_lock = threading.Lock()
++_announced = False
++
++
++def push(frame_bgr: np.ndarray, port: int = 8765, jpeg_quality: int = 80, on_url=None) -> None:
++    """Send a frame to the phone stream. Lazily starts the server on first call.
++
++    Fully defensive: any failure is swallowed so the live loop is never disrupted.
++    Announces the connect URL exactly once (to the console, and via on_url if given —
++    e.g. the app's status bar, so a GUI user doesn't have to watch the terminal).
++    """
++    global _server, _announced
++    try:
++        if _server is None:
++            with _lock:
++                if _server is None:
++                    _server = WebStreamServer(port=port, jpeg_quality=jpeg_quality).start()
++                    _announced = False
++        if not _announced:
++            _announced = True
++            url = _server.url()
++            print(f"[web_stream] Phone stream live — open on your phone: {url}")
++            if on_url is not None:
++                try:
++                    on_url(url)
++                except Exception:
++                    pass
++        _server.update_frame(frame_bgr)
++    except Exception as e:  # never let streaming break the swap
++        print(f"[web_stream] disabled after error: {e}")
++        stop()
++
++
++def get_url() -> Optional[str]:
++    """Connect URL while the stream is running, else None."""
++    return _server.url() if _server is not None else None
++
++
++def stop() -> None:
++    global _server, _announced
++    with _lock:
++        if _server is not None:
++            _server.stop()
++            _server = None
++        _announced = False
++
++
++def is_running() -> bool:
++    return _server is not None

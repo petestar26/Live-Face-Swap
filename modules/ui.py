@@ -109,54 +109,78 @@ SOURCE_TARGET_PREVIEW_SIZE = 200
 # ─── modern dark stylesheet ───────────────────────────────────────────────
 
 QSS = """
-QMainWindow, QDialog { background-color: #1e1e1e; color: #e6e6e6; }
-QWidget { color: #e6e6e6; font-family: "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif; font-size: 11pt; }
+QMainWindow, QDialog {
+    background-color: #16181d;
+    color: #e8eaed;
+}
+QWidget {
+    color: #e8eaed;
+    font-family: "Segoe UI", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+}
 
 QGroupBox {
-    background-color: #262626;
-    border: 1px solid #333333;
-    border-radius: 10px;
-    margin-top: 14px;
-    padding-top: 18px;
+    background-color: #20232a;
+    border: 1px solid #2c2f37;
+    border-radius: 12px;
+    margin-top: 16px;
+    padding: 20px 14px 12px 14px;
     font-weight: 600;
 }
 QGroupBox::title {
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    padding: 0 8px;
-    color: #9ec5ff;
+    left: 12px;
+    padding: 2px 10px;
+    color: #8fb6ff;
+    font-size: 10pt;
+    letter-spacing: 1px;
+    text-transform: uppercase;
 }
 
 QPushButton {
     background-color: #2d6cdf;
     color: white;
     border: none;
-    border-radius: 8px;
-    padding: 8px 16px;
+    border-radius: 9px;
+    padding: 9px 16px;
     font-weight: 600;
 }
-QPushButton:hover  { background-color: #3a7af0; }
+QPushButton:hover  { background-color: #3f80f5; }
 QPushButton:pressed{ background-color: #1d57c2; }
-QPushButton:disabled { background-color: #444; color: #888; }
+QPushButton:disabled { background-color: #383b42; color: #7a7d85; }
 QPushButton#secondary {
-    background-color: #3a3a3a;
+    background-color: #2b2f37;
+    border: 1px solid #3a3f49;
 }
-QPushButton#secondary:hover { background-color: #4a4a4a; }
+QPushButton#secondary:hover { background-color: #353a44; border-color: #4a5160; }
 QPushButton#danger { background-color: #c2412d; }
 QPushButton#danger:hover  { background-color: #d8523c; }
+QPushButton#success {
+    background-color: #1f9d57;
+    font-size: 12pt;
+    padding: 9px 22px;
+}
+QPushButton#success:hover  { background-color: #25b365; }
+QPushButton#success:pressed{ background-color: #178045; }
+QPushButton#success:disabled { background-color: #383b42; color: #7a7d85; }
 
 QComboBox {
-    background-color: #2a2a2a;
-    border: 1px solid #404040;
-    border-radius: 6px;
-    padding: 6px 10px;
+    background-color: #23262d;
+    border: 1px solid #383c45;
+    border-radius: 8px;
+    padding: 7px 10px;
     min-height: 24px;
 }
 QComboBox:hover { border-color: #2d6cdf; }
+QComboBox::drop-down { border: none; width: 22px; }
 QComboBox QAbstractItemView {
-    background-color: #2a2a2a;
+    background-color: #23262d;
     selection-background-color: #2d6cdf;
-    border: 1px solid #404040;
+    border: 1px solid #383c45;
+    border-radius: 6px;
+    padding: 4px;
+    outline: none;
 }
 
 QCheckBox {
@@ -164,9 +188,9 @@ QCheckBox {
     padding: 4px 0;
 }
 QCheckBox::indicator {
-    width: 36px; height: 18px;
-    border-radius: 9px;
-    background-color: #3a3a3a;
+    width: 38px; height: 20px;
+    border-radius: 10px;
+    background-color: #383c45;
 }
 QCheckBox::indicator:checked {
     background-color: #2d6cdf;
@@ -174,13 +198,13 @@ QCheckBox::indicator:checked {
 
 QSlider::groove:horizontal {
     height: 6px;
-    background: #3a3a3a;
+    background: #383c45;
     border-radius: 3px;
 }
 QSlider::handle:horizontal {
     background: #ffffff;
     width: 16px; height: 16px;
-    margin: -5px 0;
+    margin: -6px 0;
     border-radius: 8px;
     border: 1px solid #cccccc;
 }
@@ -190,12 +214,24 @@ QSlider::sub-page:horizontal {
 }
 
 QLabel#imageDrop {
-    background-color: #2a2a2a;
-    border: 2px dashed #444;
-    border-radius: 8px;
+    background-color: #23262d;
+    border: 2px dashed #3a3f49;
+    border-radius: 12px;
+    color: #7a7d85;
+}
+QLabel#sourceThumb {
+    border: 2px solid #2d6cdf;
+    border-radius: 6px;
+}
+QLabel#sourceThumb:hover {
+    border-color: #e25141;
+}
+QLabel#hintLabel {
+    color: #8a8f99;
+    font-size: 9pt;
 }
 QLabel#statusLabel {
-    color: #b9b9b9;
+    color: #c2c5cc;
     font-size: 10pt;
     font-style: italic;
 }
@@ -207,8 +243,8 @@ QLabel#linkLabel {
 QScrollArea { border: none; background: transparent; }
 
 QFrame#card {
-    background-color: #262626;
-    border-radius: 10px;
+    background-color: #20232a;
+    border-radius: 12px;
 }
 """
 
@@ -305,7 +341,10 @@ def save_switch_states():
         "many_faces": modules.globals.many_faces,
         "map_faces": modules.globals.map_faces,
         "poisson_blend": modules.globals.poisson_blend,
+        "adaptive_face_mask": modules.globals.adaptive_face_mask,
         "color_correction": modules.globals.color_correction,
+        "face_color_match": modules.globals.face_color_match,
+        "web_stream": modules.globals.web_stream,
         "nsfw_filter": modules.globals.nsfw_filter,
         "live_mirror": modules.globals.live_mirror,
         "live_resizable": modules.globals.live_resizable,
@@ -314,6 +353,8 @@ def save_switch_states():
         "mouth_mask": modules.globals.mouth_mask,
         "show_mouth_mask_box": modules.globals.show_mouth_mask_box,
         "mouth_mask_size": modules.globals.mouth_mask_size,
+        "teeth_effect": getattr(modules.globals, "teeth_effect", "None"),
+        "teeth_image_path": getattr(modules.globals, "teeth_image_path", ""),
     }
     try:
         with open("switch_states.json", "w") as f:
@@ -332,12 +373,17 @@ def load_switch_states():
         modules.globals.many_faces = state.get("many_faces", False)
         modules.globals.map_faces = state.get("map_faces", False)
         modules.globals.poisson_blend = state.get("poisson_blend", False)
+        modules.globals.adaptive_face_mask = state.get("adaptive_face_mask", True)
         modules.globals.color_correction = state.get("color_correction", False)
+        modules.globals.face_color_match = state.get("face_color_match", False)
+        modules.globals.web_stream = state.get("web_stream", False)
         modules.globals.nsfw_filter = state.get("nsfw_filter", False)
         modules.globals.live_mirror = state.get("live_mirror", False)
         modules.globals.live_resizable = state.get("live_resizable", False)
         modules.globals.fp_ui = state.get("fp_ui", {"face_enhancer": False})
         modules.globals.show_fps = state.get("show_fps", False)
+        modules.globals.teeth_effect = state.get("teeth_effect", "None")
+        modules.globals.teeth_image_path = state.get("teeth_image_path", "")
         # Mouth mask always starts disabled (slider at 0) on launch,
         # regardless of the persisted value — enable it explicitly each session.
         modules.globals.mouth_mask_size = 0.0
@@ -461,6 +507,25 @@ class _Switch(QWidget):
         self._checkbox.setChecked(value)
 
 
+class _SourceThumb(QLabel):
+    """A small clickable thumbnail for one source photo. Click to remove it."""
+
+    clicked = Signal(str)
+
+    def __init__(self, path: str, pixmap: QPixmap):
+        super().__init__()
+        self._path = path
+        self.setObjectName("sourceThumb")
+        self.setPixmap(pixmap)
+        self.setFixedSize(46, 46)
+        self.setScaledContents(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(_("Click to remove this photo"))
+
+    def mousePressEvent(self, _event) -> None:
+        self.clicked.emit(self._path)
+
+
 class MainWindow(QMainWindow):
     def __init__(self, start_cb: Callable, destroy_cb: Callable):
         super().__init__()
@@ -469,16 +534,24 @@ class MainWindow(QMainWindow):
         self._destroy_cb = destroy_cb
 
         self.setWindowTitle(
-            f"{modules.metadata.name} {modules.metadata.version} {modules.metadata.edition}"
+            f"{modules.metadata.name} {modules.metadata.version} {modules.metadata.edition}".strip()
         )
         self.setMinimumSize(ROOT_WIDTH, ROOT_HEIGHT)
         self.resize(ROOT_WIDTH, ROOT_HEIGHT)
 
+        # Central content lives inside a scroll area so it never overlaps when
+        # the content is taller than the window (small screens / high DPI) — a
+        # scrollbar appears instead of widgets drawing on top of each other.
         root = QWidget()
-        self.setCentralWidget(root)
         layout = QVBoxLayout(root)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
+
+        self._main_scroll = QScrollArea()
+        self._main_scroll.setWidgetResizable(True)
+        self._main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._main_scroll.setWidget(root)
+        self.setCentralWidget(self._main_scroll)
 
         # Source/Target row
         layout.addLayout(self._build_image_row())
@@ -501,7 +574,7 @@ class MainWindow(QMainWindow):
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._status_label)
 
-        footer = QLabel("Deep Live Cam")
+        footer = QLabel("Live Face Swap — by Peter")
         footer.setObjectName("linkLabel")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         footer.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -514,16 +587,44 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.setSpacing(16)
 
-        # Source column
+        # Source column — supports one OR several photos of the SAME person.
+        self._source_paths: List[str] = []
         src_col = QVBoxLayout()
+        src_col.setSpacing(6)
         self.source_label = _make_image_drop(_("Source face"), (200, 200))
         src_col.addWidget(self.source_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Thumbnail strip: every added photo shows here, click a thumb to remove.
+        self._source_thumb_row = QWidget()
+        self._source_thumb_row.setFixedWidth(200)
+        self._source_thumb_layout = QHBoxLayout(self._source_thumb_row)
+        self._source_thumb_layout.setContentsMargins(0, 0, 0, 0)
+        self._source_thumb_layout.setSpacing(4)
+        self._source_thumb_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        src_col.addWidget(self._source_thumb_row, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # Caption explaining the multi-photo benefit / current state.
+        self._source_caption = QLabel("")
+        self._source_caption.setObjectName("hintLabel")
+        self._source_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._source_caption.setWordWrap(True)
+        self._source_caption.setFixedWidth(200)
+        src_col.addWidget(self._source_caption, alignment=Qt.AlignmentFlag.AlignCenter)
+
         src_row = QHBoxLayout()
+        src_row.setSpacing(6)
         self.btn_select_source = QPushButton(_("Select a face"))
         self.btn_select_source.setToolTip(
             _("Choose the source face image to swap onto the target")
         )
         self.btn_select_source.clicked.connect(self._on_select_source)
+        self.btn_add_source = QPushButton(_("+ Add"))
+        self.btn_add_source.setObjectName("secondary")
+        self.btn_add_source.setFixedWidth(78)
+        self.btn_add_source.setToolTip(
+            _("Add more photos of the SAME person (different angles/sizes) for a sharper, more stable swap")
+        )
+        self.btn_add_source.clicked.connect(self._on_add_source)
         self.btn_random_face = QPushButton("🔄")
         self.btn_random_face.setObjectName("secondary")
         self.btn_random_face.setFixedWidth(40)
@@ -532,8 +633,10 @@ class MainWindow(QMainWindow):
         )
         self.btn_random_face.clicked.connect(self._on_random_face)
         src_row.addWidget(self.btn_select_source)
+        src_row.addWidget(self.btn_add_source)
         src_row.addWidget(self.btn_random_face)
         src_col.addLayout(src_row)
+        self._refresh_source_ui()
 
         # Swap button column
         swap_col = QVBoxLayout()
@@ -592,6 +695,13 @@ class MainWindow(QMainWindow):
                                "Blend face edges smoothly using Poisson blending")
         self.sw_color_fix = make("color_correction", "Fix Blueish Cam",
                                  "Fix blue/green color cast from some webcams")
+        self.sw_face_color = make("face_color_match", "Match Face Color",
+                                  "Match the swapped face's color/lighting to the target face")
+        self.sw_adaptive = make("adaptive_face_mask", "Auto-fit Face",
+                                "Fit the swap to your real face outline so it covers your WHOLE face "
+                                "even when the source photo's face is a different size/shape")
+        self.sw_web_stream = make("web_stream", "Stream to Phone (Web)",
+                                  "Serve the live output over Wi-Fi; open the printed URL on your phone's browser")
         self.sw_show_fps = make("show_fps", "Show FPS",
                                 "Display frames-per-second counter on the live preview")
 
@@ -606,13 +716,18 @@ class MainWindow(QMainWindow):
             self.sw_keep_frames, self.sw_many_faces,
             self.sw_map_faces, self.sw_show_fps,
             self.sw_poisson, self.sw_color_fix,
+            self.sw_face_color, self.sw_adaptive,
+            self.sw_web_stream,
         ]
         for i, w in enumerate(items):
             grid.addWidget(w, i // 2, i % 2)
 
-        # Face enhancer dropdown
+        # Face enhancer dropdown — place on the row AFTER the last switch row.
+        # ceil(len/2) handles odd switch counts (a lone switch on the last row
+        # would otherwise share a cell with this label).
+        enhancer_row = (len(items) + 1) // 2
         enhancer_label = QLabel(_("Face Enhancer:"))
-        grid.addWidget(enhancer_label, len(items) // 2, 0)
+        grid.addWidget(enhancer_label, enhancer_row, 0)
 
         self.cb_enhancer = QComboBox()
         self.cb_enhancer.addItems(["None", "GFPGAN", "GPEN-512", "GPEN-256"])
@@ -626,7 +741,23 @@ class MainWindow(QMainWindow):
         self.cb_enhancer.setCurrentText(initial)
         self.cb_enhancer.currentTextChanged.connect(self._on_enhancer_change)
         self.cb_enhancer.setToolTip(_("Select a face enhancement model (None = no enhancement)"))
-        grid.addWidget(self.cb_enhancer, len(items) // 2, 1)
+        grid.addWidget(self.cb_enhancer, enhancer_row, 1)
+
+        # Teeth effect dropdown — an optional cosmetic overlay on the swapped
+        # mouth. "None" = off (default); nothing else in the pipeline changes.
+        teeth_row = enhancer_row + 1
+        teeth_label = QLabel(_("Teeth Effect:"))
+        grid.addWidget(teeth_label, teeth_row, 0)
+        self.cb_teeth = QComboBox()
+        self.cb_teeth.addItems(["None", "White", "Add Tooth", "Gold", "Silver", "Image…"])
+        self.cb_teeth.setCurrentText(getattr(modules.globals, "teeth_effect", "None") or "None")
+        self.cb_teeth.currentTextChanged.connect(self._on_teeth_change)
+        self.cb_teeth.setToolTip(
+            _("Show a teeth style on the swapped mouth (None = off): "
+              "White = whiten, Add Tooth = fill a missing-tooth gap, "
+              "Gold/Silver = solid grillz, Image… = overlay your own grillz picture")
+        )
+        grid.addWidget(self.cb_teeth, teeth_row, 1)
 
         return card
 
@@ -658,6 +789,15 @@ class MainWindow(QMainWindow):
         self.s_sharpness = slider(0.0, 5.0, 0.0, 10, self._on_sharpness_change)
         self.s_sharpness.setToolTip(_("Sharpen the enhanced face output"))
         grid.addWidget(self.s_sharpness, 1, 1)
+
+        # Color Match Strength — how strongly to pull the swapped face toward the
+        # target's color/lighting (only has effect when "Match Face Color" is on).
+        grid.addWidget(QLabel(_("Color Match")), 3, 0)
+        self.s_color_match = slider(0.0, 1.0, 1.0, 100, self._on_color_match_strength_change)
+        self.s_color_match.setToolTip(
+            _("Strength of Match Face Color (0% = raw swap, 100% = full match to target)")
+        )
+        grid.addWidget(self.s_color_match, 3, 1)
 
         # Mouth mask — always starts at 0 (disabled) on launch
         grid.addWidget(QLabel(_("Mouth Mask")), 2, 0)
@@ -714,7 +854,8 @@ class MainWindow(QMainWindow):
         self.cb_camera.setToolTip(_("Select which camera to use for live mode"))
         layout.addWidget(self.cb_camera, 1)
 
-        self.btn_live = QPushButton(_("Live"))
+        self.btn_live = QPushButton(_("● Live"))
+        self.btn_live.setObjectName("success")
         self.btn_live.setEnabled(cam_ok)
         self.btn_live.setToolTip(_("Start real-time face swap using webcam"))
         self.btn_live.clicked.connect(self._on_live)
@@ -728,25 +869,126 @@ class MainWindow(QMainWindow):
         self._status_label.setText(text)
 
     def _on_select_source(self) -> None:
-        global _RECENT_SOURCE_DIR
+        # Pick 1 photo for a normal swap, or select several at once. This
+        # REPLACES the current set.
         if _PREVIEW is not None:
             _PREVIEW.hide()
-        path, _filter = QFileDialog.getOpenFileName(
-            self, _("select an source image"),
+        paths, _filter = QFileDialog.getOpenFileNames(
+            self, _("Select 1 photo — or 2+ photos of the SAME person for a better swap"),
             _RECENT_SOURCE_DIR or "",
             "Images (*.png *.jpg *.jpeg *.gif *.bmp)",
         )
-        if path and is_image(path):
-            modules.globals.source_path = path
-            _RECENT_SOURCE_DIR = os.path.dirname(path)
-            self.source_label.setPixmap(render_image_preview(path, (200, 200)))
-            self.source_label.setText("")
-        elif not path:
+        self._apply_source_paths(paths, append=False)
+
+    def _on_add_source(self) -> None:
+        # ADD more photos of the same person to the current set (keeps existing).
+        if _PREVIEW is not None:
+            _PREVIEW.hide()
+        paths, _filter = QFileDialog.getOpenFileNames(
+            self, _("Add more photos of the SAME person"),
+            _RECENT_SOURCE_DIR or "",
+            "Images (*.png *.jpg *.jpeg *.gif *.bmp)",
+        )
+        self._apply_source_paths(paths, append=True)
+
+    def _apply_source_paths(self, paths, append: bool) -> None:
+        """Set or extend the source-photo set, then rebuild the swap identity."""
+        paths = [p for p in (paths or []) if p and is_image(p)]
+        if not paths:
             return
+        if append:
+            combined = list(self._source_paths)
+            for p in paths:
+                if p not in combined:
+                    combined.append(p)
+            self._source_paths = combined
         else:
+            self._source_paths = paths
+        self._rebuild_source()
+
+    def _remove_source_path(self, path: str) -> None:
+        """Drop one photo (clicked in the thumbnail strip) and re-average."""
+        self._source_paths = [p for p in self._source_paths if p != path]
+        self._rebuild_source()
+
+    def _rebuild_source(self) -> None:
+        """Apply self._source_paths to globals: first photo is the preview, and
+        2+ photos of the same person get their face embeddings averaged into a
+        single stronger identity (source_face_override)."""
+        global _RECENT_SOURCE_DIR
+        paths = self._source_paths
+        modules.globals.source_face_override = None
+        if not paths:
             modules.globals.source_path = None
             self.source_label.clear()
             self.source_label.setText(_("Source face"))
+            self._refresh_source_ui()
+            return
+        modules.globals.source_path = paths[0]
+        _RECENT_SOURCE_DIR = os.path.dirname(paths[0])
+        if len(paths) > 1:
+            try:
+                from modules.face_analyser import build_average_source_face
+                avg = build_average_source_face(paths)
+                if avg is not None:
+                    modules.globals.source_face_override = avg
+                    update_status(
+                        f"Blended {len(paths)} photos of the same person — sharper, steadier face"
+                    )
+                else:
+                    update_status("Couldn't read a face in the extra photos — using the first one")
+            except Exception as exc:
+                print(f"multi-source averaging failed, using first image: {exc}")
+        self.source_label.setPixmap(render_image_preview(paths[0], (200, 200)))
+        self.source_label.setText("")
+        self._refresh_source_ui()
+
+    def _refresh_source_ui(self) -> None:
+        """Rebuild the thumbnail strip and the caption under the source box."""
+        # Clear existing thumbnails.
+        while self._source_thumb_layout.count():
+            item = self._source_thumb_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        paths = self._source_paths
+        n = len(paths)
+        # Show a strip only when there are 2+ photos (a single photo is already
+        # shown in the big preview box above).
+        self._source_thumb_row.setVisible(n > 1)
+        if n > 1:
+            MAX_THUMBS = 6
+            for p in paths[:MAX_THUMBS]:
+                try:
+                    pm = render_image_preview(p, (46, 46))
+                except Exception:
+                    continue
+                thumb = _SourceThumb(p, pm)
+                thumb.clicked.connect(self._remove_source_path)
+                self._source_thumb_layout.addWidget(thumb)
+            if n > MAX_THUMBS:
+                more = QLabel(f"+{n - MAX_THUMBS}")
+                more.setObjectName("hintLabel")
+                more.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._source_thumb_layout.addWidget(more)
+
+        if n == 0:
+            self._source_caption.setText(
+                _("Tip: add 2+ photos of the SAME person for a sharper swap")
+            )
+        elif n == 1:
+            self._source_caption.setText(
+                _("1 photo · click + Add for more of the same person")
+            )
+        elif modules.globals.source_face_override is not None:
+            self._source_caption.setText(
+                _("%d photos blended ✓  (click a thumbnail to remove)") % n
+            )
+        else:
+            self._source_caption.setText(
+                _("%d photos · using the 1st (no face found in the others)") % n
+            )
 
     def _on_select_target(self) -> None:
         global _RECENT_TARGET_DIR
@@ -789,9 +1031,8 @@ class MainWindow(QMainWindow):
             temp_path = os.path.join(tempfile.gettempdir(), "deep_live_cam_random_face.jpg")
             with open(temp_path, "wb") as f:
                 f.write(response.content)
-            modules.globals.source_path = temp_path
-            self.source_label.setPixmap(render_image_preview(temp_path, (200, 200)))
-            self.source_label.setText("")
+            self._source_paths = [temp_path]
+            self._rebuild_source()
         except Exception as exc:
             print(f"Failed to fetch random face: {exc}")
 
@@ -806,10 +1047,15 @@ class MainWindow(QMainWindow):
         _RECENT_TARGET_DIR = os.path.dirname(sp)
         if _PREVIEW is not None:
             _PREVIEW.hide()
+        # The swapped-in source is now a single image — reset the multi-photo set
+        # and clear any averaged identity so the strip/caption stay accurate.
+        self._source_paths = [tp]
+        modules.globals.source_face_override = None
         self.source_label.setPixmap(render_image_preview(tp, (200, 200)))
         self.target_label.setPixmap(render_image_preview(sp, (200, 200)))
         self.source_label.setText("")
         self.target_label.setText("")
+        self._refresh_source_ui()
 
     def _on_map_faces_toggled(self, value: bool) -> None:
         modules.globals.map_faces = value
@@ -831,6 +1077,35 @@ class MainWindow(QMainWindow):
             _update_tumbler(selected, True)
         save_switch_states()
 
+    def _on_teeth_change(self, choice: str) -> None:
+        if choice and choice.startswith("Image"):
+            # Ask the user to pick a grillz/teeth image. On cancel, revert the
+            # dropdown to whatever was selected before (don't silently arm an
+            # image mode with no image).
+            path, _f = QFileDialog.getOpenFileName(
+                self,
+                _("Select a teeth / grillz image (PNG with transparency works best)"),
+                _RECENT_SOURCE_DIR or "",
+                "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+            )
+            if path:
+                modules.globals.teeth_image_path = path
+                modules.globals.teeth_effect = choice
+                save_switch_states()
+                update_status(f"Teeth image: {os.path.basename(path)}")
+            else:
+                prev = getattr(modules.globals, "teeth_effect", "None") or "None"
+                self.cb_teeth.blockSignals(True)
+                self.cb_teeth.setCurrentText(prev if self.cb_teeth.findText(prev) >= 0 else "None")
+                self.cb_teeth.blockSignals(False)
+            return
+        modules.globals.teeth_effect = choice or "None"
+        save_switch_states()
+        if choice and choice != "None":
+            update_status(f"Teeth effect: {choice}")
+        else:
+            update_status("Teeth effect off")
+
     def _on_transparency_change(self, value: float) -> None:
         modules.globals.opacity = value
         pct = int(value * 100)
@@ -847,6 +1122,10 @@ class MainWindow(QMainWindow):
     def _on_sharpness_change(self, value: float) -> None:
         modules.globals.sharpness = value
         update_status(f"Sharpness set to {value:.1f}")
+
+    def _on_color_match_strength_change(self, value: float) -> None:
+        modules.globals.face_color_match_strength = value
+        update_status(f"Color match strength set to {int(value * 100)}%")
 
     def _on_mouth_mask_change(self, value: float) -> None:
         modules.globals.mouth_mask_size = value
@@ -1015,11 +1294,19 @@ class _CaptureWorker(QThread):
         self._stop = stop_event
 
     def run(self) -> None:
+        consecutive_fail = 0
         while not self._stop.is_set():
             ret, frame = self._cap.read()
-            if not ret:
-                self._stop.set()
-                break
+            # A phone-as-webcam (DroidCam/Iriun) can briefly return a bad/empty
+            # frame on a Wi-Fi or low-battery hiccup. Skip those instead of
+            # tearing down the live session; only give up after sustained loss.
+            if not ret or frame is None or getattr(frame, "size", 0) == 0:
+                consecutive_fail += 1
+                if consecutive_fail > 150:
+                    self._stop.set()
+                    break
+                continue
+            consecutive_fail = 0
             try:
                 self._queue.put_nowait(frame)
             except queue.Full:
@@ -1036,17 +1323,81 @@ class _CaptureWorker(QThread):
 class _ProcessingWorker(QThread):
     """Pulls raw frames, runs detect/swap/enhance, pushes processed frames."""
 
+    # 90° rotations to try when auto-orienting a sideways camera feed.
+    _ROT_CANDIDATES = (
+        None,
+        cv2.ROTATE_90_CLOCKWISE,
+        cv2.ROTATE_180,
+        cv2.ROTATE_90_COUNTERCLOCKWISE,
+    )
+
     def __init__(self, capture_queue, processed_queue, stop_event, camera_fps: float):
         super().__init__()
         self._cq = capture_queue
         self._pq = processed_queue
         self._stop = stop_event
         self._fps = camera_fps
+        # Auto-orientation state. Phone-as-webcam feeds (DroidCam/Iriun) often
+        # arrive rotated 90°, which stops the detector from finding any face so
+        # nothing gets swapped. We lock onto the orientation that yields a face.
+        self._rot_code = None        # cv2 rotate code, or None for upright
+        self._rot_locked = False
+        self._rot_miss = 0
+
+    def _auto_orient(self, frame):
+        """Return `frame` rotated so a face is upright (best-effort).
+
+        While unlocked, probe the four 90° orientations and lock onto the first
+        that yields a detectable face. Once locked, just apply that rotation
+        (one cheap cv2.rotate/frame). Fully guarded — any failure returns the
+        frame untouched so the live loop is never broken.
+        """
+        try:
+            if self._rot_locked:
+                if self._rot_code is None:
+                    return frame
+                return cv2.rotate(frame, self._rot_code)
+            # The modern detector finds a face even when it's rotated 90°, so we
+            # can't just take the first orientation that yields a face (that locks
+            # onto the sideways feed). Instead score each orientation by how
+            # UPRIGHT the face is — eyes horizontal and above the mouth — using the
+            # 5 keypoints, and lock onto the best.
+            best = None  # (score, code, rotated_frame)
+            for code in self._ROT_CANDIDATES:
+                cand = frame if code is None else cv2.rotate(frame, code)
+                face = detect_one_face_fast(cand)
+                if face is None:
+                    continue
+                kps = getattr(face, "kps", None)
+                if kps is None or len(kps) < 5:
+                    continue
+                le, re_, _nose, lm, rm = kps[0], kps[1], kps[2], kps[3], kps[4]
+                eye_dx = abs(float(le[0]) - float(re_[0]))
+                eye_dy = abs(float(le[1]) - float(re_[1]))
+                eyes_y = (float(le[1]) + float(re_[1])) / 2.0
+                mouth_y = (float(lm[1]) + float(rm[1])) / 2.0
+                horiz = eye_dx / (eye_dx + eye_dy + 1e-6)   # ~1 when eyes level
+                above = 1.0 if eyes_y < mouth_y else 0.0     # eyes over mouth
+                # Detection confidence is highest for the genuinely upright face;
+                # the geometry terms break the tie between the two 90° rotations
+                # (both make eyes level, but only one is right-side-up).
+                det_score = float(getattr(face, "det_score", 0.0) or 0.0)
+                score = det_score + above * 0.5 + horiz * 0.3
+                if best is None or score > best[0]:
+                    best = (score, code, cand)
+            if best is not None:
+                self._rot_code = best[1]
+                self._rot_locked = True
+                self._rot_miss = 0
+                return best[2]
+        except Exception:
+            pass
+        return frame
 
     def run(self) -> None:
         frame_processors = get_frame_processors_modules(modules.globals.frame_processors)
         source_image = None
-        last_source_path = None
+        last_source_key = None
         prev_time = time.time()
         fps_update_interval = 0.5
         frame_count = 0
@@ -1062,17 +1413,27 @@ class _ProcessingWorker(QThread):
             except queue.Empty:
                 continue
 
+            if frame is None or getattr(frame, "size", 0) == 0:
+                continue
+            frame = self._auto_orient(frame)
+            if frame is None or getattr(frame, "size", 0) == 0:
+                continue
             temp_frame = frame
             if modules.globals.live_mirror:
                 temp_frame = gpu_flip(temp_frame, 1)
 
             if not modules.globals.map_faces:
-                if (
-                    modules.globals.source_path
-                    and modules.globals.source_path != last_source_path
-                ):
-                    last_source_path = modules.globals.source_path
-                    source_image = get_one_face(imread_unicode(modules.globals.source_path))
+                # Reload the source when the path OR the averaged-faces override
+                # changes. If a multi-photo average is set, use it directly;
+                # otherwise detect the face in the single source image.
+                _override = getattr(modules.globals, "source_face_override", None)
+                src_key = (modules.globals.source_path, id(_override))
+                if modules.globals.source_path and src_key != last_source_key:
+                    last_source_key = src_key
+                    source_image = (
+                        _override if _override is not None
+                        else get_one_face(imread_unicode(modules.globals.source_path))
+                    )
 
                 det_count += 1
                 if det_count % det_interval == 0:
@@ -1083,16 +1444,29 @@ class _ProcessingWorker(QThread):
                         cached_target_face = detect_one_face_fast(temp_frame)
                         cached_many_faces = None
 
+                    # If we've lost the face for a sustained stretch while a
+                    # rotation is locked (e.g. the phone was turned), unlock so
+                    # the next frame re-probes all four orientations.
+                    if self._rot_locked:
+                        _found = bool(cached_many_faces) or (cached_target_face is not None)
+                        self._rot_miss = 0 if _found else self._rot_miss + 1
+                        if self._rot_miss >= 15:
+                            self._rot_locked = False
+                            self._rot_code = None
+                            self._rot_miss = 0
+
                 cached_faces = None
                 if cached_many_faces:
                     cached_faces = cached_many_faces
                 elif cached_target_face is not None:
                     cached_faces = [cached_target_face]
 
-                # Fast detection skips the 2d106 landmark model, but the mouth
-                # mask needs it. Attach landmarks on demand (computed once per
-                # detection cycle — the helper no-ops if already present).
-                if modules.globals.mouth_mask and cached_faces:
+                # Fast detection skips the 2d106 landmark model, but BOTH the
+                # mouth mask AND the adaptive full-face mask need it. Attach
+                # landmarks once per detection cycle (the helper no-ops if already
+                # present) so the swap fits the whole real face, not a fixed oval.
+                if (modules.globals.mouth_mask
+                        or getattr(modules.globals, "adaptive_face_mask", True)) and cached_faces:
                     ensure_landmarks(temp_frame, cached_faces)
 
                 for fp in frame_processors:
@@ -1158,6 +1532,19 @@ class _ProcessingWorker(QThread):
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2,
                 )
 
+            # Mirror the live output to a phone/browser over Wi-Fi when enabled.
+            # push() lazily starts the server and is fully self-guarded; the URL is
+            # shown once in the status bar (update_status is Signal-based = thread-safe).
+            if modules.globals.web_stream:
+                try:
+                    import modules.web_stream as _web_stream
+                    _web_stream.push(
+                        temp_frame,
+                        on_url=lambda u: update_status(f"📱 Phone stream ready — open {u} in your phone's browser"),
+                    )
+                except Exception:
+                    pass
+
             try:
                 self._pq.put_nowait(temp_frame)
             except queue.Full:
@@ -1195,8 +1582,11 @@ class WebcamPreviewWindow(QWidget):
             f"{self._cap.actual_height}@{camera_fps:.0f}fps"
         )
 
-        self._capture_queue: queue.Queue = queue.Queue(maxsize=2)
-        self._processed_queue: queue.Queue = queue.Queue(maxsize=2)
+        # maxsize=1 keeps latency minimal: the capture/processing workers always
+        # work on the FRESHEST frame and drop stale ones, instead of letting a
+        # 2-deep backlog build up (which adds lip-sync lag in a call).
+        self._capture_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._processed_queue: queue.Queue = queue.Queue(maxsize=1)
         self._stop_event = threading.Event()
 
         self._capture_worker = _CaptureWorker(

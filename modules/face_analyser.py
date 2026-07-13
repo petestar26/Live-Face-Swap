@@ -145,9 +145,60 @@ def get_one_face(frame: Frame, faces: Any = None) -> Any:
         else:
             faces = _analyse_faces(frame)
     try:
-        return min(faces, key=lambda x: x.bbox[0])
+        # Lock onto the LARGEST face (the closest / centered main subject)
+        # rather than the left-most one — keeps single-face mode steady on the
+        # foreground person instead of jumping to a smaller background face.
+        return max(
+            faces,
+            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+        )
     except ValueError:
         return None
+
+
+def build_average_source_face(paths: Any) -> Any:
+    """Build ONE source Face whose embedding is the AVERAGE of several photos of
+    the same person — a more accurate, robust identity than any single photo.
+
+    Pass a list of image paths (same person, varied angle/size/lighting).
+    Returns a Face cloned from the first usable photo with its identity
+    ``embedding`` replaced by the mean of the (unit-normalised) embeddings across
+    all photos, or None if no faces are found in any of them.
+
+    Note: insightface's ``Face.normed_embedding`` is a read-only property derived
+    from ``embedding``; the swapper consumes ``normed_embedding``. So we write the
+    averaged vector into ``embedding`` and let the property re-normalise it.
+    """
+    import numpy as np
+    base = None
+    embeddings = []
+    for p in paths:
+        try:
+            img = imread_unicode(p)
+        except Exception:
+            img = None
+        if img is None:
+            continue
+        f = get_one_face(img)
+        if f is None:
+            continue
+        emb = getattr(f, "normed_embedding", None)
+        if emb is None:
+            continue
+        # Use the UNIT embedding so every photo contributes equally (a photo with
+        # a larger raw magnitude shouldn't dominate the blended identity).
+        embeddings.append(np.asarray(emb, dtype=np.float32))
+        if base is None:
+            base = f
+    if base is None or not embeddings:
+        return None
+    mean = np.mean(embeddings, axis=0).astype(np.float32)
+    norm = float(np.linalg.norm(mean))
+    if norm > 0:
+        mean = mean / norm
+    # Write to the settable identity vector; normed_embedding derives from this.
+    base.embedding = mean
+    return base
 
 
 def get_many_faces(frame: Frame) -> Any:
@@ -171,7 +222,11 @@ def detect_one_face_fast(frame: Frame) -> Any:
     bboxes, kpss = fa.det_model.detect(frame, max_num=0, metric='default')
     if bboxes.shape[0] == 0:
         return None
-    idx = int(bboxes[:, 0].argmin())
+    # Pick the LARGEST face (closest / centered main subject) instead of the
+    # left-most — stops single-face live swap from hopping to a smaller
+    # background person when two people are in frame.
+    areas = (bboxes[:, 2] - bboxes[:, 0]) * (bboxes[:, 3] - bboxes[:, 1])
+    idx = int(areas.argmax())
     return Face(bbox=bboxes[idx, :4], kps=kpss[idx], det_score=bboxes[idx, 4])
 
 

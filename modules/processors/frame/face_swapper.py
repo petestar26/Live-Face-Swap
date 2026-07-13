@@ -41,6 +41,7 @@ PREVIOUS_FRAME_RESULT = None # Stores the final processed frame from the previou
 _ELLIPTICAL_MASK_CACHE: dict = {}
 _poisson_cached_mask: Optional[np.ndarray] = None
 _poisson_cached_key: Optional[tuple] = None
+_SHARPEN_MASK_CACHE: dict = {}  # feathered-blend mask for apply_post_processing sharpening
 
 
 def _create_elliptical_mask(size: Tuple[int, int]) -> np.ndarray:
@@ -53,30 +54,65 @@ def _create_elliptical_mask(size: Tuple[int, int]) -> np.ndarray:
     if size in _ELLIPTICAL_MASK_CACHE:
         return _ELLIPTICAL_MASK_CACHE[size]
     h, w = size
-    center = (w // 2, h // 2)
-    axes = (int(w * 0.44), int(h * 0.44))
+    # Match _get_soft_alpha: a face-sized oval kept clear of the crop edges (so
+    # no rectangular outline), with a soft bottom cutoff at the jaw so the
+    # Poisson region never reaches inswapper's smeared neck band.
+    center = (w // 2, int(h * 0.56))
+    axes = (int(w * 0.34), int(h * 0.43))
     mask = np.zeros((h, w), dtype=np.float32)
     cv2.ellipse(mask, center, axes, 0, 0, 360, 1, -1)
+    ys = np.linspace(0.0, 1.0, h, dtype=np.float32).reshape(-1, 1)
+    mask *= np.clip((0.96 - ys) / (0.96 - 0.82), 0.0, 1.0)
     if h * w < 65536:
-        mask = cv2.GaussianBlur(mask, (31, 31), 12)
+        mask = cv2.GaussianBlur(mask, (31, 31), 11)
     else:
-        mask = gpu_gaussian_blur(mask, (31, 31), 12)
+        mask = gpu_gaussian_blur(mask, (31, 31), 11)
     _ELLIPTICAL_MASK_CACHE[size] = mask
     return mask
 
 
 def _apply_poisson_blend(swapped_frame: Frame, original_frame: Frame,
                          target_face: Face, affine_matrix: np.ndarray = None,
-                         bgr_fake: np.ndarray = None) -> Frame:
+                         bgr_fake: np.ndarray = None,
+                         face_mask: np.ndarray = None) -> Frame:
     """Poisson-blend the swapped face onto the original frame.
 
     Preferred path derives the blend mask from the swap's inverse affine so
     it tracks the swapped face exactly per-frame (no landmark jitter, no
     smoothing). Falls back to a cached bbox-ellipse if the affine is absent.
     Writes only the blended ellipse back so other faces are preserved.
+
+    When ``face_mask`` (the adaptive landmark face mask) is supplied, Poisson
+    blends over that exact region so it stays consistent with the adaptive
+    paste-back — covering the whole detected face, not just an oval.
     """
     global _poisson_cached_mask, _poisson_cached_key
     try:
+        # ---- Adaptive: blend over the real face outline (landmark mask) ----
+        if face_mask is not None and getattr(face_mask, "size", 0) > 0:
+            try:
+                h, w = swapped_frame.shape[:2]
+                bin_full = np.where(face_mask > 127, np.uint8(255), np.uint8(0))
+                bx, by, bw, bh = cv2.boundingRect(bin_full)
+                if bw > 8 and bh > 8:
+                    # Erode so the seamlessClone seam sits inside solid face pixels.
+                    k = max(3, (min(bw, bh) // 20) | 1)
+                    bin_full = cv2.erode(
+                        bin_full, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+                    bx, by, bw, bh = cv2.boundingRect(bin_full)
+                    mx1, my1 = bx, by
+                    mx2, my2 = bx + bw - 1, by + bh - 1
+                    if bw > 8 and bh > 8 and mx1 > 0 and my1 > 0 and mx2 < w - 1 and my2 < h - 1:
+                        center = (bx + bw // 2, by + bh // 2)
+                        blended = cv2.seamlessClone(swapped_frame, original_frame,
+                                                    bin_full, center, cv2.NORMAL_CLONE)
+                        np.copyto(swapped_frame[my1:my2 + 1, mx1:mx2 + 1],
+                                  blended[my1:my2 + 1, mx1:mx2 + 1],
+                                  where=bin_full[my1:my2 + 1, mx1:mx2 + 1, None].astype(bool))
+                        return swapped_frame
+            except Exception:
+                pass  # fall through to the affine-ellipse path below
+
         # ---- Preferred: blend ONLY the genuinely-swapped region ----
         # Use the exact paste-back mask (warped elliptical mask), eroded so
         # the Poisson seam sits on solidly-swapped pixels only.
@@ -317,16 +353,23 @@ def _get_soft_alpha(size: int) -> np.ndarray:
     the feather radius scales naturally with the affine transform.
     """
     if _paste_cache['alpha_size'] != size:
-        # Elliptical (not square) template — matches the gumroad edition's
-        # _create_elliptical_mask. A full/eroded square leaves the aligned
-        # crop's corners near-opaque, so the swapped square's straight edges
-        # show as a visible box on the face. An ellipse (axes 0.44*size) zeroes
-        # the corners and the heavy blur feathers smoothly into the original.
-        center = (size // 2, size // 2)
-        axes = (int(size * 0.44), int(size * 0.44))
-        mask = np.zeros((size, size), dtype=np.uint8)
-        cv2.ellipse(mask, center, axes, 0, 0, 360, 255, -1)
-        mask = cv2.GaussianBlur(mask, (31, 31), 12)
+        # Face-sized oval positioned over where inswapper aligns the face (eyes
+        # ~0.46, mouth ~0.82, so the face sits LOW → centre 0.56). Crucially the
+        # radii are kept WELL INSIDE the square aligned crop (x 0.34, y 0.43): if
+        # the oval reaches the crop's edges, that straight edge warps into the
+        # frame as a RECTANGULAR outline on the cheeks/jaw. Staying clear of all
+        # four edges means the only boundary is the soft oval — no rectangle.
+        center = (size // 2, int(size * 0.56))
+        axes = (int(size * 0.34), int(size * 0.43))
+        mask = np.zeros((size, size), dtype=np.float32)
+        cv2.ellipse(mask, center, axes, 0, 0, 360, 1.0, -1)
+        # The bottom ~5% of inswapper's output is an invented, smeared neck. Fade
+        # the mask to 0 between 0.82 and 0.96: the chin/jaw stay fully covered,
+        # while the smeared band below the chin is never blended in.
+        ys = np.linspace(0.0, 1.0, size, dtype=np.float32).reshape(-1, 1)
+        mask *= np.clip((0.96 - ys) / (0.96 - 0.82), 0.0, 1.0)
+        mask = cv2.GaussianBlur(mask, (31, 31), 11)
+        mask = (mask * 255.0).astype(np.uint8)
         _paste_cache['soft_alpha'] = mask  # uint8 [0, 255] — blended via cv2 SIMD ops
         _paste_cache['alpha_size'] = size
     return _paste_cache['soft_alpha']
@@ -436,6 +479,24 @@ def _cuda_graph_swap_inference(blob: np.ndarray, latent: np.ndarray) -> np.ndarr
         return cg['io_binding'].get_outputs()[0].numpy()
 
 
+def _warp_bbox_alpha_to_frame(M: np.ndarray, frame_shape: Tuple[int, int], face_size: int) -> np.ndarray:
+    """Warp the fixed-oval template (_get_soft_alpha) into full-frame space.
+
+    Used as a coverage FLOOR under the landmark-based adaptive mask. Landmarks
+    can go wrong — sunglasses hide the eyes, extreme close-up/tilted angles
+    distort the 106-point model — and when they do, the landmark hull can
+    shrink to a small patch (eyes/forehead only), which is the "only swaps a
+    cropped face" bug. This affine-only oval only depends on the face
+    detector's bbox/keypoints (robust even with sunglasses on), so unioning it
+    in guarantees the swap never shrinks below a normal full-face oval.
+    """
+    h, w = frame_shape
+    IM = cv2.invertAffineTransform(M)
+    soft_alpha = _get_soft_alpha(face_size)
+    warped = cv2.warpAffine(soft_alpha, IM, (w, h), flags=cv2.INTER_LINEAR, borderValue=0)
+    return warped
+
+
 def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, M: np.ndarray) -> Frame:
     """Paste bgr_fake back onto target_img via the inverse affine of M.
 
@@ -499,6 +560,422 @@ def _fast_paste_back(target_img: Frame, bgr_fake: np.ndarray, aimg: np.ndarray, 
     return target_img
 
 
+def _landmark_paste_back(target_img: Frame, bgr_fake: np.ndarray,
+                         M: np.ndarray, face_mask: np.ndarray) -> Frame:
+    """Paste the swapped face using an ADAPTIVE mask built from the target's
+    actual face landmarks (``face_mask``), instead of a fixed oval.
+
+    The fixed-oval paste assumes every face is the same shape/size in aligned
+    space, so when the source and target faces differ the swap can fall short of
+    the real jaw/forehead (looks like a small patch) or spill past it. This
+    blends the warped swap wherever the landmark mask says the real face is, so
+    coverage always matches the detected face. Bounded to the mask's bbox for
+    speed. Returns ``target_img`` mutated in place, or ``None`` to signal the
+    caller to fall back to the oval paste.
+    """
+    ys, xs = np.where(face_mask > 0)
+    if xs.size == 0:
+        return None
+    h, w = target_img.shape[:2]
+    x1, x2 = int(xs.min()), int(xs.max()) + 1
+    y1, y2 = int(ys.min()), int(ys.max()) + 1
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    if x2 - x1 < 4 or y2 - y1 < 4:
+        return None
+
+    IM = cv2.invertAffineTransform(M)
+    IM_crop = IM.copy()
+    IM_crop[0, 2] -= x1
+    IM_crop[1, 2] -= y1
+    crop_w, crop_h = x2 - x1, y2 - y1
+
+    warped_fake = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h),
+                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    alpha = face_mask[y1:y2, x1:x2]
+    alpha_3c = cv2.merge([alpha, alpha, alpha])
+    inv_alpha = 255 - alpha_3c
+    a_fake = cv2.multiply(warped_fake, alpha_3c, scale=1.0 / 255.0)
+    a_tgt = cv2.multiply(target_img[y1:y2, x1:x2], inv_alpha, scale=1.0 / 255.0)
+    target_img[y1:y2, x1:x2] = cv2.add(a_fake, a_tgt)
+    return target_img
+
+
+def _adaptive_face_alpha(face: Face, frame: Frame) -> Optional[np.ndarray]:
+    """Feathered alpha that follows the ACTUAL face outline (2d106 landmarks).
+
+    Two things keep it frame-free on any face:
+      * the feather scales with face size (~13% of face width), so the edge
+        dissolves whether you're far from or right up against the camera — a
+        fixed-pixel feather looks soft when the face is small but becomes a hard
+        ring (a "frame") when the face is large;
+      * the forehead is estimated only gently (0.6x up, 1.05x out) so the mask
+        doesn't overshoot onto the hairline/background and draw an edge there.
+    """
+    lm = getattr(face, "landmark_2d_106", None)
+    if lm is None:
+        return None
+    lm = np.asarray(lm, dtype=np.float32)
+    if lm.shape[0] < 106 or not np.all(np.isfinite(lm)):
+        return None
+    h, w = frame.shape[:2]
+
+    outline = lm[0:33]                       # jaw + cheek contour
+    eyebrows = lm[33:43]
+    chin = lm[16]                            # chin tip
+    pts = outline
+    eb_center = eyebrows.mean(axis=0)
+    up = eb_center - chin
+    n = float(np.linalg.norm(up))
+    if n > 0:
+        up = up / n
+        forehead = eyebrows + up * (n * 0.60)            # gentle forehead reach
+        top_c = forehead.mean(axis=0)
+        forehead = (forehead - top_c) * 1.05 + top_c     # barely widen the top
+        pts = np.concatenate((outline, forehead), axis=0)
+
+    try:
+        hull = cv2.convexHull(pts.astype(np.float32))
+    except Exception:
+        return None
+    if hull is None or len(hull) < 3:
+        return None
+
+    mask = np.zeros((h, w), dtype=np.uint8)
+    hull_i = hull.astype(np.int32)
+    cv2.fillConvexPoly(mask, hull_i, 255)
+
+    # Feather proportional to face width → no hard edge at any distance.
+    try:
+        bx1, by1, bx2, by2 = [float(v) for v in face.bbox]
+        face_w = max(8.0, bx2 - bx1)
+    except Exception:
+        face_w = max(8.0, float(w) * 0.3)
+    k = int(face_w * 0.13) | 1
+    k = max(11, min(k, 121))
+    # Blur ONLY the face region (hull bbox + kernel margin), not the whole frame.
+    # This runs every frame; a full-frame large-kernel blur is a real latency hit,
+    # so bounding it to the face keeps live FPS high without changing the look.
+    hx, hy, hw_, hh_ = cv2.boundingRect(hull_i)
+    rx1, ry1 = max(0, hx - k), max(0, hy - k)
+    rx2, ry2 = min(w, hx + hw_ + k), min(h, hy + hh_ + k)
+    if rx2 > rx1 and ry2 > ry1:
+        mask[ry1:ry2, rx1:rx2] = cv2.GaussianBlur(mask[ry1:ry2, rx1:rx2], (k, k), 0)
+    return mask
+
+
+def _flatten_local_highlights(bgr_fake: np.ndarray, max_dev: float = 4.0,
+                              max_dev_chroma: float = 3.0) -> np.ndarray:
+    """Remove blotchy local bright/dark/off-color patches baked into the RAW
+    swap output.
+
+    inswapper_128 isn't perfectly disentangled from the target's lighting: on a
+    face with strong local lighting (a window/lamp lighting one side or one
+    patch much more than the rest), the model partially leaks that same
+    hot-spot into its generated face — even with color-match and relighting
+    fully OFF. That shows up as a visible blotchy two-tone patch (confirmed by
+    inspecting bgr_fake directly, before any of our post-processing runs), and
+    the patch isn't purely a brightness shift — it carries a color-tint shift
+    too (e.g. a yellowish cast), so BOTH luminance (L) and color (a, b) need
+    flattening, not lightness alone.
+
+    Fix: for each LAB channel, find the swap's own broad-scale (blurred)
+    value, and clamp it to within a bound of its own median. Fine texture (the
+    high-frequency detail) is untouched — only the broad hot/dark/off-color
+    patch gets flattened toward a normal, even-toned face.
+    """
+    try:
+        lab = cv2.cvtColor(bgr_fake, cv2.COLOR_BGR2LAB).astype(np.float32)
+        # A near-global blur (k > crop size) so the "broad" component approaches
+        # a single per-channel baseline for the whole face — a moderate kernel
+        # (~half the crop) still let a sizeable hot-spot read as "broad terrain"
+        # and survive clamping instead of being flattened away.
+        k = (int(min(bgr_fake.shape[:2]) * 2.5) | 1)
+        for ch, dev in ((0, max_dev), (1, max_dev_chroma), (2, max_dev_chroma)):
+            plane = lab[:, :, ch]
+            lo = cv2.GaussianBlur(plane, (k, k), 0)
+            median = float(np.median(lo))
+            lo_flat = np.clip(lo, median - dev, median + dev)
+            detail = plane - lo
+            lab[:, :, ch] = np.clip(detail + lo_flat, 0, 255)
+        return cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    except Exception:
+        return bgr_fake
+
+
+def _relight_to_target(swap_bgr: np.ndarray, target_bgr: np.ndarray,
+                       amount: float = 0.6) -> np.ndarray:
+    """Nudge the swap's OVERALL brightness toward the room's, so it doesn't
+    look like a flatly-pasted photo — WITHOUT importing any local shading.
+
+    Earlier versions transferred a per-pixel low-frequency luminance MAP from
+    the target (to mimic the room's light direction/shadow). That is exactly
+    what let a real target with strong uneven lighting (a window/lamp lighting
+    one part of the face much more than the rest) get partially transplanted
+    onto the swap as a blotchy two-tone patch — confirmed by testing: even a
+    wide blur + per-pixel clamp still let a sizeable local hot-spot bleed
+    through, because transferring ANY spatial map from a blotchy source
+    reproduces some version of that blotch.
+
+    So this now transfers a single SCALAR average brightness/tone shift only —
+    same idea (the swap should read as "in this room", not too bright/dark),
+    but with zero spatial structure carried over, so a blotchy or unevenly-lit
+    room can no longer imprint its shape onto the face.
+    """
+    try:
+        sw_lab = cv2.cvtColor(swap_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        tg_lab = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        L = sw_lab[:, :, 0]
+        # Single scalar shift (median, not mean — robust to a small hot-spot
+        # skewing the room's apparent average brightness).
+        shift = float(np.clip((np.median(tg_lab[:, :, 0]) - np.median(L)) * amount, -20.0, 20.0))
+        sw_lab[:, :, 0] = np.clip(L + shift, 0, 255)
+        return cv2.cvtColor(sw_lab.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    except Exception:
+        return swap_bgr
+
+
+_TEETH_IMG_CACHE = {"path": None, "img": None}
+
+
+def _load_teeth_image():
+    """Load & cache the user-selected teeth/grillz image (BGR or BGRA).
+
+    Returns None when no valid image path is set (so the effect no-ops).
+    Reloads only when the chosen path changes. Uses imdecode so it handles
+    unicode paths AND keeps a PNG's transparency (alpha) if present.
+    """
+    path = getattr(modules.globals, "teeth_image_path", "") or ""
+    if not path or not os.path.exists(path):
+        return None
+    if _TEETH_IMG_CACHE["path"] == path and _TEETH_IMG_CACHE["img"] is not None:
+        return _TEETH_IMG_CACHE["img"]
+    img = None
+    try:
+        img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    except Exception:
+        img = None
+    _TEETH_IMG_CACHE["path"] = path
+    _TEETH_IMG_CACHE["img"] = img
+    return img
+
+
+def _teeth_style(roi_bgr: np.ndarray, style: str) -> np.ndarray:
+    """Return `roi_bgr` recolored for the chosen teeth style.
+
+    Self-contained helper for _apply_teeth_effect. Pure pixel math on a small
+    BGR crop; never raises for a normal image (callers still guard it).
+    """
+    s = (style or "").strip().lower()
+    if s in ("white", "whiten", "whitening"):
+        # Clean white teeth: desaturate + brighten toward white.
+        hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[:, :, 1] *= 0.25
+        hsv[:, :, 2] = np.clip(hsv[:, :, 2] * 1.25 + 35.0, 0, 255)
+        return cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
+    if s == "gold":
+        # Gold grillz: tint toward a warm gold, modulated by each pixel's
+        # brightness so the metallic shading (bright/dark) is preserved.
+        gold = np.array([30.0, 170.0, 220.0], dtype=np.float32)  # BGR (warm gold)
+        g = (cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0)[:, :, None]
+        return np.clip(gold[None, None, :] * (0.5 + 0.5 * g), 0, 255).astype(np.uint8)
+    if s in ("silver", "grillz", "metal"):
+        # Silver grillz: neutral metallic grey, brightness-shaded.
+        v = np.clip(cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32) * 1.15 + 45.0, 0, 255)
+        return cv2.merge([v, v, v]).astype(np.uint8)
+    return roi_bgr
+
+
+def _apply_teeth_effect(swapped_frame: Frame, face: Face, frame_for_landmarks: Frame,
+                        style: str) -> Frame:
+    """Overlay a chosen teeth effect (White / Gold / Silver) onto the mouth's
+    teeth region of an already-swapped frame.
+
+    Completely self-contained and defensive: on ANY problem — missing/invalid
+    landmarks, closed mouth, no teeth detected, or any exception — it returns
+    the input frame unchanged. It only ever touches the bright (teeth) pixels
+    inside the lip outline, never the rest of the face, so it cannot affect any
+    other feature. Called only when modules.globals.teeth_effect is set to a
+    real style (guarded at the call site); otherwise this never runs.
+    """
+    try:
+        lm = getattr(face, "landmark_2d_106", None)
+        if lm is None:
+            # Landmarks are normally already present (adaptive mask computes
+            # them). If not, best-effort compute; give up quietly on failure.
+            try:
+                from modules.face_analyser import ensure_landmarks
+                ensure_landmarks(frame_for_landmarks, [face])
+                lm = getattr(face, "landmark_2d_106", None)
+            except Exception:
+                lm = None
+        if lm is None:
+            return swapped_frame
+        lm = np.asarray(lm, dtype=np.float32)
+        if lm.shape[0] < 64 or not np.all(np.isfinite(lm)):
+            return swapped_frame
+
+        h, w = swapped_frame.shape[:2]
+        # Outer lip outline (indices 52-63) — same set the mouth mask uses.
+        mouth_pts = lm[52:64].astype(np.int32)
+        hull = cv2.convexHull(mouth_pts)
+        mouth_mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillConvexPoly(mouth_mask, hull, 255)
+        # Stay just inside the lips so we never tint the lip edge.
+        mouth_mask = cv2.erode(
+            mouth_mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+
+        ys, xs = np.where(mouth_mask > 0)
+        if xs.size < 12:
+            return swapped_frame
+        x1, x2 = int(xs.min()), int(xs.max()) + 1
+        y1, y2 = int(ys.min()), int(ys.max()) + 1
+        roi = swapped_frame[y1:y2, x1:x2]
+        roi_mask = mouth_mask[y1:y2, x1:x2]
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        val = hsv[:, :, 2]   # brightness
+        sat = hsv[:, :, 1]   # color saturation
+        inside = val[roi_mask > 0]
+        if inside.size < 6:
+            return swapped_frame
+        # Teeth are the pixels inside the mouth that are BOTH bright AND whitish
+        # (low saturation). The brightness test alone also catches a brightly-lit
+        # pink LOWER LIP, tinting it too — the low-saturation test excludes the
+        # lips (pink/red = saturated) and keeps only white/metallic teeth.
+        # Brightness threshold is relative to the mouth's own mean (adapts to
+        # lighting) with a floor so a fully-dark closed mouth stays untouched.
+        thr = max(95.0, float(np.mean(inside)) + 5.0)
+        teeth_bin = ((val >= thr) & (sat <= 90) & (roi_mask > 0)).astype(np.uint8) * 255
+        # Only apply when the mouth is genuinely OPEN. A CLOSED mouth still has a
+        # thin bright line where the lips meet (or a lip highlight), which the
+        # brightness test would otherwise tint — that's the stray white streak.
+        # An open mouth shows a teeth BLOCK with real height; a closed mouth only
+        # a thin horizontal sliver. Gate on both the teeth area (vs mouth area)
+        # and the block's height (vs mouth width) so a sliver never qualifies.
+        teeth_area = int(cv2.countNonZero(teeth_bin))
+        mouth_area = int(cv2.countNonZero(roi_mask))
+        roi_w = teeth_bin.shape[1]
+        pts_nz = cv2.findNonZero(teeth_bin)
+        if pts_nz is None or mouth_area <= 0:
+            return swapped_frame
+        _tx, _ty, _tw, _th = cv2.boundingRect(pts_nz)
+        enough_area = teeth_area >= max(20, int(0.04 * mouth_area))
+        has_height = _th >= max(6, int(0.06 * roi_w))
+        if os.environ.get("KP_TEETH_DEBUG"):
+            print(f"[teeth] area={teeth_area} mouth={mouth_area} "
+                  f"({100.0*teeth_area/max(mouth_area,1):.1f}%) blockH={_th} "
+                  f"roiW={roi_w} (H/W={_th/max(roi_w,1):.2f}) "
+                  f"enough_area={enough_area} has_height={has_height}")
+        if not (enough_area and has_height):
+            return swapped_frame  # mouth closed / no real teeth visible → no-op
+
+        s_low = (style or "").strip().lower()
+
+        def _solid_band(bin_mask):
+            # Close the gaps between teeth into ONE solid band (kept inside the
+            # lips via roi_mask) so a fill covers the whole tooth row, not just
+            # the individually-bright pixels — that's what removes the patchiness.
+            rh, rw = bin_mask.shape[:2]
+            kx = max(5, (rw // 7) | 1)
+            ky = max(3, (rh // 5) | 1)
+            b = cv2.morphologyEx(
+                bin_mask, cv2.MORPH_CLOSE,
+                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kx, ky)))
+            return cv2.bitwise_and(b, roi_mask)
+
+        if s_low.startswith("image"):
+            # Overlay a user-selected grillz/teeth image onto the teeth band.
+            grillz = _load_teeth_image()
+            if grillz is None:
+                return swapped_frame  # no valid image chosen → no-op
+            band = _solid_band(teeth_bin)
+            nz = cv2.findNonZero(band)
+            if nz is None:
+                return swapped_frame
+            bx, by, bw, bh = cv2.boundingRect(nz)
+            if bw < 4 or bh < 4:
+                return swapped_frame
+            gr = cv2.resize(grillz, (bw, bh), interpolation=cv2.INTER_AREA)
+            effect = roi.copy()
+            if gr.ndim == 3 and gr.shape[2] == 4:
+                # PNG with transparency: composite by its own alpha, and use
+                # that alpha (∩ the teeth band) as the blend mask so only the
+                # grillz shape shows, not the image's background.
+                a = gr[:, :, 3:4].astype(np.float32) / 255.0
+                effect[by:by+bh, bx:bx+bw] = (
+                    gr[:, :, :3].astype(np.float32) * a +
+                    roi[by:by+bh, bx:bx+bw].astype(np.float32) * (1.0 - a)
+                ).astype(np.uint8)
+                amask = np.zeros(band.shape, np.uint8)
+                amask[by:by+bh, bx:bx+bw] = gr[:, :, 3]
+                teeth_mask = cv2.GaussianBlur(cv2.bitwise_and(band, amask), (5, 5), 0)
+            else:
+                # No transparency: shape the image to the teeth band.
+                gr3 = gr[:, :, :3] if gr.ndim == 3 else cv2.cvtColor(gr, cv2.COLOR_GRAY2BGR)
+                effect[by:by+bh, bx:bx+bw] = gr3
+                teeth_mask = cv2.GaussianBlur(band, (5, 5), 0)
+        elif s_low in ("add tooth", "tooth", "add-tooth"):
+            # "Add Tooth" — fill a MISSING-tooth gap so the row looks complete.
+            # Morphologically close the teeth with a WIDE-short kernel: this
+            # bridges horizontal gaps between teeth (a missing tooth) without
+            # filling the vertical mouth opening below. Kept inside the lips so
+            # it never spills past the mouth. Existing teeth are whitened; the
+            # newly-filled gap gets a clean white tooth colour derived from the
+            # real teeth (so it matches their shade).
+            rh, rw = teeth_bin.shape[:2]
+            kx = max(5, (rw // 6) | 1)   # ~ up to one tooth-width horizontally
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kx, 3))
+            filled = cv2.morphologyEx(teeth_bin, cv2.MORPH_CLOSE, kernel)
+            filled = cv2.bitwise_and(filled, roi_mask)
+            gap = cv2.subtract(filled, teeth_bin)  # the added-tooth pixels
+            teeth_px = roi[teeth_bin > 0].reshape(-1, 3)
+            if teeth_px.shape[0] >= 3:
+                base = np.median(teeth_px, axis=0).astype(np.float32)
+            else:
+                base = np.array([230.0, 232.0, 235.0], dtype=np.float32)
+            tooth_color = np.clip(
+                base * 0.35 + np.array([240.0, 242.0, 245.0], dtype=np.float32) * 0.65,
+                0, 255).astype(np.uint8)
+            effect = _teeth_style(roi, "White")   # whiten the existing teeth
+            effect[gap > 0] = tooth_color          # fill the gap with a tooth
+            teeth_mask = cv2.GaussianBlur(filled, (5, 5), 0)
+        elif s_low in ("gold", "silver", "white", "grillz", "metal", "whiten"):
+            # Solid, even fill over the whole teeth row (grillz = solid metal;
+            # White = clean veneers). A UNIFORM colour with a subtle top→bottom
+            # metallic gradient is used — NOT the underlying teeth brightness —
+            # so shadowed teeth / gaps can't create the patchy, spotty look.
+            band = _solid_band(teeth_bin)
+            nz = cv2.findNonZero(band)
+            if nz is None:
+                teeth_mask = cv2.GaussianBlur(teeth_bin, (5, 5), 0)
+                effect = _teeth_style(roi, style)
+            else:
+                bx, by, bw, bh = cv2.boundingRect(nz)
+                if s_low in ("silver", "metal"):
+                    base_col = np.array([205.0, 208.0, 210.0], np.float32)   # BGR silver
+                elif s_low in ("white", "whiten"):
+                    base_col = np.array([236.0, 240.0, 243.0], np.float32)   # BGR clean white
+                else:
+                    base_col = np.array([30.0, 170.0, 220.0], np.float32)    # BGR warm gold
+                grad = np.linspace(1.12, 0.74, max(bh, 1), dtype=np.float32).reshape(bh, 1, 1)
+                tile = np.clip(base_col.reshape(1, 1, 3) * grad, 0, 255).astype(np.uint8)
+                effect = roi.copy()
+                effect[by:by+bh, bx:bx+bw] = tile   # (bh,1,3) broadcasts over (bh,bw,3)
+                teeth_mask = cv2.GaussianBlur(band, (5, 5), 0)
+        else:
+            teeth_mask = cv2.GaussianBlur(teeth_bin, (5, 5), 0)
+            effect = _teeth_style(roi, style)
+
+        tm = (teeth_mask.astype(np.float32) / 255.0)[:, :, None]
+        blended = (effect.astype(np.float32) * tm +
+                   roi.astype(np.float32) * (1.0 - tm))
+        swapped_frame[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
+        return swapped_frame
+    except Exception:
+        return swapped_frame
+
+
 def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     """Optimized face swapping with better memory management and performance."""
     face_swapper = get_face_swapper()
@@ -552,12 +1029,70 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         if not isinstance(bgr_fake, np.ndarray):
             return original_frame
 
+        # Flatten any blotchy local hot/dark patch the model itself baked in —
+        # unconditional (not gated behind face_color_match), since this fixes
+        # an inswapper artifact, not a preference toggle. See docstring.
+        bgr_fake = _flatten_local_highlights(bgr_fake)
+
+        # --- Optional: match the swapped face's color/lighting to the target ---
+        # inswapper preserves the SOURCE identity's skin tone, which can clash with
+        # the target's lighting and leave a visible seam. Recolor the aligned swap
+        # (bgr_fake) toward the aligned target face's LAB statistics before paste-back.
+        if getattr(modules.globals, "face_color_match", False):
+            try:
+                fh, fw = bgr_fake.shape[:2]
+                aligned_target = cv2.warpAffine(temp_frame, M, (fw, fh))
+                # Restrict color stats to the face ellipse (same cached template the
+                # paste-back uses) so crop-border pixels don't skew the skin-tone match.
+                cm_mask = np.where(_get_soft_alpha(fh) > 127, np.uint8(255), np.uint8(0))
+                matched = apply_color_transfer(bgr_fake, aligned_target, mask=cm_mask)
+                # Strength lets the user dial the correction (0 = raw swap, 1 = full match).
+                strength = max(0.0, min(1.0, float(getattr(modules.globals, "face_color_match_strength", 1.0))))
+                if strength >= 1.0:
+                    bgr_fake = matched
+                elif strength > 0.0:
+                    bgr_fake = cv2.addWeighted(bgr_fake, 1.0 - strength, matched, strength, 0)
+                # Relight with the scene's real shading so the swap doesn't look
+                # like a flatly-pasted photo (the "looks pasted" complaint).
+                bgr_fake = _relight_to_target(bgr_fake, aligned_target, amount=0.6)
+            except Exception:
+                pass  # color match is best-effort; never block the swap
+
         # Pass a dummy aimg with correct shape — _fast_paste_back only uses aimg.shape
         # to create the white mask. Avoids redundant norm_crop2 (~0.6ms).
         _face_size = face_swapper.input_size[0]
         _aimg_dummy = np.empty((_face_size, _face_size, 3), dtype=np.uint8)
 
-        swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M)
+        # Adaptive paste: fit the blend to the ACTUAL detected face outline so the
+        # swap covers the whole face even when source/target face sizes differ.
+        # Falls back to the fixed-oval paste if landmarks are unavailable.
+        swapped_frame = None
+        adaptive_mask = None
+        if getattr(modules.globals, "adaptive_face_mask", True):
+            try:
+                if getattr(target_face, "landmark_2d_106", None) is None:
+                    from modules.face_analyser import ensure_landmarks
+                    ensure_landmarks(temp_frame, [target_face])
+                if getattr(target_face, "landmark_2d_106", None) is not None:
+                    fm = _adaptive_face_alpha(target_face, temp_frame)
+                    if fm is not None and fm.size and int(fm.max()) > 0:
+                        # Union with the affine-only oval floor — see
+                        # _warp_bbox_alpha_to_frame. Whichever mask reaches
+                        # further at each pixel wins, so bad landmarks (e.g.
+                        # sunglasses hiding the eyes) can never shrink coverage
+                        # below a normal full-face oval; good landmarks can
+                        # still extend coverage to match an unusual face shape.
+                        floor_mask = _warp_bbox_alpha_to_frame(M, temp_frame.shape[:2], _face_size)
+                        fm = np.maximum(fm, floor_mask)
+                        pasted = _landmark_paste_back(temp_frame, bgr_fake, M, fm)
+                        if pasted is not None:
+                            swapped_frame = pasted
+                            adaptive_mask = fm
+            except Exception as _adapt_e:
+                swapped_frame = None
+                adaptive_mask = None
+        if swapped_frame is None:
+            swapped_frame = _fast_paste_back(temp_frame, bgr_fake, _aimg_dummy, M)
 
     except Exception as e:
         print(f"Error during face swap: {e}")
@@ -595,8 +1130,17 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
     # no EMA, no lag. See _apply_poisson_blend.
     if getattr(modules.globals, "poisson_blend", False):
         swapped_frame = _apply_poisson_blend(
-            swapped_frame, original_frame, target_face, M, bgr_fake
+            swapped_frame, original_frame, target_face, M, bgr_fake,
+            face_mask=adaptive_mask
         )
+
+    # --- Teeth effect (optional cosmetic overlay; OFF by default) ---
+    # When teeth_effect is unset/"None" this whole block is skipped, so the
+    # swap output is unchanged. When a style is chosen it only recolors the
+    # teeth pixels inside the mouth (self-contained, fully guarded).
+    _teeth = getattr(modules.globals, "teeth_effect", "None")
+    if _teeth and _teeth != "None":
+        swapped_frame = _apply_teeth_effect(swapped_frame, target_face, original_frame, _teeth)
 
     # Apply opacity blend between the original frame and the swapped frame
     if opacity >= 1.0:
@@ -688,7 +1232,27 @@ def apply_post_processing(current_frame: Frame, swapped_face_bboxes: List[np.nda
             try:
                 sigma = 2 if IS_APPLE_SILICON else 3
                 sharpened_region = gpu_sharpen(face_region, strength=sharpness_value, sigma=sigma)
-                processed_frame[y1:y2, x1:x2] = sharpened_region
+                # Blend through a feathered oval, not a hard rectangular overwrite.
+                # A straight copy into the bbox creates a sharpness discontinuity at
+                # the rectangle's edges — invisible at low strength, but it reads as
+                # the same rectangular "frame" artifact the mask/enhancer work above
+                # was fixing once sharpness is turned up. Feathering keeps the extra
+                # crispness on the face while letting it fade out at the bbox edge.
+                rh, rw = face_region.shape[:2]
+                key = (rw, rh)
+                cache = _SHARPEN_MASK_CACHE
+                if cache.get('key') != key:
+                    fm = np.zeros((rh, rw), dtype=np.float32)
+                    cv2.ellipse(fm, (rw // 2, rh // 2), (int(rw * 0.5), int(rh * 0.5)),
+                                0, 0, 360, 1.0, -1)
+                    k = max(3, (min(rw, rh) // 6) | 1)
+                    fm = cv2.GaussianBlur(fm, (k, k), 0)
+                    cache['key'] = key
+                    cache['mask'] = fm[:, :, np.newaxis]
+                fmask = cache['mask']
+                blended = (sharpened_region.astype(np.float32) * fmask +
+                          face_region.astype(np.float32) * (1.0 - fmask))
+                processed_frame[y1:y2, x1:x2] = np.clip(blended, 0, 255).astype(np.uint8)
             except cv2.error:
                 pass
 
@@ -1487,9 +2051,14 @@ def create_face_mask(face: Face, frame: Frame) -> np.ndarray:
     return mask # Return uint8 mask
 
 
-def apply_color_transfer(source, target):
+def apply_color_transfer(source, target, mask=None):
     """
     Apply color transfer using LAB color space. Handles potential division by zero and ensures output is uint8.
+
+    mask(None)  optional single-channel uint8 HxW (same size as source/target). When
+                given, LAB statistics are computed ONLY over masked (non-zero) pixels,
+                so non-skin border pixels in an aligned crop don't skew the match —
+                this tightens the color seam at the face boundary.
     """
     # Input validation
     if source is None or target is None or source.size == 0 or target.size == 0:
@@ -1530,8 +2099,20 @@ def apply_color_transfer(source, target):
         target_lab = cv2.cvtColor(target_float, cv2.COLOR_BGR2LAB)
 
         # Compute statistics
-        source_mean, source_std = cv2.meanStdDev(source_lab)
-        target_mean, target_std = cv2.meanStdDev(target_lab)
+        # Restrict statistics to the masked (face) region when a mask is supplied —
+        # falls back to whole-image stats if the mask is empty/mismatched.
+        stat_mask = None
+        if mask is not None:
+            try:
+                if mask.shape[:2] == source_lab.shape[:2]:
+                    stat_mask = mask if mask.dtype == np.uint8 else mask.astype(np.uint8)
+                    if cv2.countNonZero(stat_mask) < 16:
+                        stat_mask = None
+            except Exception:
+                stat_mask = None
+
+        source_mean, source_std = cv2.meanStdDev(source_lab, mask=stat_mask)
+        target_mean, target_std = cv2.meanStdDev(target_lab, mask=stat_mask)
 
         # Reshape for broadcasting
         source_mean = source_mean.reshape((1, 1, 3))
@@ -1544,8 +2125,12 @@ def apply_color_transfer(source, target):
         source_std = np.maximum(source_std, epsilon)
         # target_std = np.maximum(target_std, epsilon) # Target std can be small
 
-        # Perform color transfer in LAB space
-        result_lab = (source_lab - source_mean) * (target_std / source_std) + target_mean
+        # Perform color transfer in LAB space.
+        # NOTE: cv2.meanStdDev returns float64, which would promote result_lab to
+        # float64 — and cv2.cvtColor(LAB2BGR) rejects CV_64F, raising cv2.error that
+        # the handler below silently swallows (making this whole function a no-op).
+        # Cast back to float32 so the conversion (and thus the transfer) actually runs.
+        result_lab = ((source_lab - source_mean) * (target_std / source_std) + target_mean).astype(np.float32)
 
         # --- No explicit clipping needed in LAB space typically ---
         # Clipping is handled implicitly by the conversion back to BGR and then to uint8

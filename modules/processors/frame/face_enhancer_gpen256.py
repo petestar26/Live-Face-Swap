@@ -27,6 +27,9 @@ MODEL_FILE = "GPEN-BFR-256.onnx"
 
 ENHANCER = None
 THREAD_LOCK = threading.Lock()
+# Set True once a model download/load fails, so we stop retrying the (dead)
+# download on every single frame — that floods the log with 404s and tanks FPS.
+_LOAD_FAILED = False
 
 abs_dir = os.path.dirname(os.path.abspath(__file__))
 models_dir = os.path.join(
@@ -51,27 +54,40 @@ def pre_start() -> bool:
 
 
 def get_enhancer() -> Any:
-    global ENHANCER
+    global ENHANCER, _LOAD_FAILED
+    if _LOAD_FAILED:
+        return None
     with THREAD_LOCK:
+        if _LOAD_FAILED:
+            return None
         if ENHANCER is None:
             model_path = os.path.join(models_dir, MODEL_FILE)
-            if not os.path.exists(model_path):
-                from modules.utilities import conditional_download
-                conditional_download(models_dir, [MODEL_URL])
-            if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Model file not found: {model_path}")
-            print(f"{NAME}: Loading ONNX model from {model_path}")
-            ENHANCER = create_onnx_session(model_path)
-            warmup_session(ENHANCER)
-            print(f"{NAME}: Model loaded successfully.")
+            try:
+                if not os.path.exists(model_path):
+                    from modules.utilities import conditional_download
+                    conditional_download(models_dir, [MODEL_URL])
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"Model file not found: {model_path}")
+                print(f"{NAME}: Loading ONNX model from {model_path}")
+                ENHANCER = create_onnx_session(model_path)
+                warmup_session(ENHANCER)
+                print(f"{NAME}: Model loaded successfully.")
+            except Exception as e:
+                # Disable this enhancer for the rest of the session instead of
+                # retrying the download every frame. The swap still runs fine.
+                _LOAD_FAILED = True
+                update_status(
+                    f"{MODEL_FILE} unavailable — face enhancer disabled, swap continues without it.",
+                    NAME,
+                )
+                print(f"{NAME}: disabled (model load failed): {e}")
+                return None
     return ENHANCER
 
 
 def enhance_face(temp_frame: Frame, face: Face) -> Frame:
-    try:
-        session = get_enhancer()
-    except Exception as e:
-        print(f"{NAME}: {e}")
+    session = get_enhancer()
+    if session is None:
         return temp_frame
     try:
         return enhance_face_onnx(temp_frame, face, session, INPUT_SIZE)

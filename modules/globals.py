@@ -39,6 +39,13 @@ adaptive_face_mask: bool = True  # Fit the blend to the ACTUAL detected face out
 color_correction: bool = False   # Enable color correction (implementation specific)
 face_color_match: bool = False   # Match swapped-face color/lighting to the target face (LAB transfer)
 face_color_match_strength: float = 1.0  # 0..1 blend of the color-matched face over the raw swap
+# Keep the SOURCE photo's real skin colour instead of repainting the swap with
+# the target's. Normal colour-match rewrites all three LAB channels toward the
+# target, which hides the seam but also replaces the source person's skin tone
+# with the camera person's. With this on, only the LIGHTING (LAB L) follows the
+# room while the chroma (a,b) — the actual colour identity of the provided
+# picture — is preserved. False = previous behaviour, byte-for-byte unchanged.
+source_skin_tone: bool = False
 web_stream: bool = False         # Stream the live output over HTTP so a phone/browser can view it
 nsfw_filter: bool = False
 

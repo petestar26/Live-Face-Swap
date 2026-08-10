@@ -735,6 +735,53 @@ def _relight_to_target(swap_bgr: np.ndarray, target_bgr: np.ndarray,
         return swap_bgr
 
 
+def _match_luma_keep_chroma(swap_bgr: np.ndarray, target_bgr: np.ndarray,
+                            mask: Optional[np.ndarray] = None,
+                            amount: float = 1.0) -> np.ndarray:
+    """Adapt only the LIGHTING of the swap to the room, keeping the SOURCE's colour.
+
+    The normal colour match (apply_color_transfer) rewrites all three LAB
+    channels toward the target, so the swapped face ends up wearing the CAMERA
+    person's skin tone — the seam disappears but the provided picture's actual
+    colour identity is gone with it.
+
+    Here only L (lightness/shading) is matched to the target, so the face still
+    reads as "lit by this room" and doesn't look flatly pasted, while a and b
+    (the chroma — i.e. the real skin colour of the source photo) pass through
+    untouched. Statistics are taken over `mask` when given, so crop-border
+    pixels can't skew the exposure match.
+
+    amount   0 = keep the raw swap's own lighting, 1 = full match to the room.
+    """
+    try:
+        lab_s = cv2.cvtColor(swap_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        lab_t = cv2.cvtColor(target_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+        Ls, Lt = lab_s[:, :, 0], lab_t[:, :, 0]
+
+        sel = None
+        if mask is not None and mask.shape[:2] == Ls.shape[:2]:
+            sel = mask > 0
+            if int(np.count_nonzero(sel)) < 16:
+                sel = None
+        s_vals = Ls[sel] if sel is not None else Ls
+        t_vals = Lt[sel] if sel is not None else Lt
+
+        ms, ss = float(s_vals.mean()), float(s_vals.std())
+        mt, st = float(t_vals.mean()), float(t_vals.std())
+        # Clamp the contrast ratio so an oddly-exposed frame can't crush or
+        # blow out the face; the shift itself is clamped by the L range. With
+        # (near-)flat input there is no contrast to rescale, so fall back to a
+        # pure brightness shift rather than skipping the match entirely.
+        ratio = 1.0 if ss < 1e-3 else float(np.clip(st / ss, 0.6, 1.6))
+        newL = (Ls - ms) * ratio + mt
+
+        a = float(np.clip(amount, 0.0, 1.0))
+        lab_s[:, :, 0] = np.clip(Ls * (1.0 - a) + newL * a, 0, 255)
+        return cv2.cvtColor(lab_s.astype(np.uint8), cv2.COLOR_LAB2BGR)
+    except Exception:
+        return swap_bgr
+
+
 _TEETH_IMG_CACHE = {"path": None, "img": None}
 
 
@@ -1038,23 +1085,35 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         # inswapper preserves the SOURCE identity's skin tone, which can clash with
         # the target's lighting and leave a visible seam. Recolor the aligned swap
         # (bgr_fake) toward the aligned target face's LAB statistics before paste-back.
-        if getattr(modules.globals, "face_color_match", False):
+        # source_skin_tone keeps the provided picture's real skin colour and only
+        # adapts the lighting; it runs on its own so it still works when the
+        # target-matching toggle is off (that combination is the whole point).
+        _keep_source_tone = getattr(modules.globals, "source_skin_tone", False)
+        if getattr(modules.globals, "face_color_match", False) or _keep_source_tone:
             try:
                 fh, fw = bgr_fake.shape[:2]
                 aligned_target = cv2.warpAffine(temp_frame, M, (fw, fh))
                 # Restrict color stats to the face ellipse (same cached template the
                 # paste-back uses) so crop-border pixels don't skew the skin-tone match.
                 cm_mask = np.where(_get_soft_alpha(fh) > 127, np.uint8(255), np.uint8(0))
-                matched = apply_color_transfer(bgr_fake, aligned_target, mask=cm_mask)
                 # Strength lets the user dial the correction (0 = raw swap, 1 = full match).
                 strength = max(0.0, min(1.0, float(getattr(modules.globals, "face_color_match_strength", 1.0))))
-                if strength >= 1.0:
-                    bgr_fake = matched
-                elif strength > 0.0:
-                    bgr_fake = cv2.addWeighted(bgr_fake, 1.0 - strength, matched, strength, 0)
-                # Relight with the scene's real shading so the swap doesn't look
-                # like a flatly-pasted photo (the "looks pasted" complaint).
-                bgr_fake = _relight_to_target(bgr_fake, aligned_target, amount=0.6)
+                if _keep_source_tone:
+                    # Lighting-only: chroma (the source photo's true colour) is kept.
+                    bgr_fake = _match_luma_keep_chroma(
+                        bgr_fake, aligned_target, mask=cm_mask, amount=strength
+                    )
+                else:
+                    matched = apply_color_transfer(bgr_fake, aligned_target, mask=cm_mask)
+                    if strength >= 1.0:
+                        bgr_fake = matched
+                    elif strength > 0.0:
+                        bgr_fake = cv2.addWeighted(bgr_fake, 1.0 - strength, matched, strength, 0)
+                    # Relight with the scene's real shading so the swap doesn't look
+                    # like a flatly-pasted photo (the "looks pasted" complaint).
+                    # Skipped in keep-source mode: the luma match above already
+                    # aligned L, so a second global shift would only add drift.
+                    bgr_fake = _relight_to_target(bgr_fake, aligned_target, amount=0.6)
             except Exception:
                 pass  # color match is best-effort; never block the swap
 

@@ -344,6 +344,7 @@ def save_switch_states():
         "adaptive_face_mask": modules.globals.adaptive_face_mask,
         "color_correction": modules.globals.color_correction,
         "face_color_match": modules.globals.face_color_match,
+        "source_skin_tone": getattr(modules.globals, "source_skin_tone", False),
         "web_stream": modules.globals.web_stream,
         "nsfw_filter": modules.globals.nsfw_filter,
         "live_mirror": modules.globals.live_mirror,
@@ -376,6 +377,7 @@ def load_switch_states():
         modules.globals.adaptive_face_mask = state.get("adaptive_face_mask", True)
         modules.globals.color_correction = state.get("color_correction", False)
         modules.globals.face_color_match = state.get("face_color_match", False)
+        modules.globals.source_skin_tone = state.get("source_skin_tone", False)
         modules.globals.web_stream = state.get("web_stream", False)
         modules.globals.nsfw_filter = state.get("nsfw_filter", False)
         modules.globals.live_mirror = state.get("live_mirror", False)
@@ -697,6 +699,11 @@ class MainWindow(QMainWindow):
                                  "Fix blue/green color cast from some webcams")
         self.sw_face_color = make("face_color_match", "Match Face Color",
                                   "Match the swapped face's color/lighting to the target face")
+        self.sw_source_tone = make("source_skin_tone", "Keep Source Skin Tone",
+                                   "Keep the REAL skin colour of the photo you picked instead of "
+                                   "repainting the face with your own. Only the lighting follows "
+                                   "the room, so it still looks natural. Turn this on when the "
+                                   "swap should look exactly like the person in the picture")
         self.sw_adaptive = make("adaptive_face_mask", "Auto-fit Face",
                                 "Fit the swap to your real face outline so it covers your WHOLE face "
                                 "even when the source photo's face is a different size/shape")
@@ -717,7 +724,7 @@ class MainWindow(QMainWindow):
             self.sw_map_faces, self.sw_show_fps,
             self.sw_poisson, self.sw_color_fix,
             self.sw_face_color, self.sw_adaptive,
-            self.sw_web_stream,
+            self.sw_source_tone, self.sw_web_stream,
         ]
         for i, w in enumerate(items):
             grid.addWidget(w, i // 2, i % 2)

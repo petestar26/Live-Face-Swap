@@ -1570,6 +1570,9 @@ class WebcamPreviewWindow(QWidget):
         super().__init__()
         self.setWindowTitle("Live Preview")
         self.resize(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT)
+        # Aspect of the last frame shown; drives _match_window_to_frame so the
+        # window takes the video's shape instead of letterboxing it.
+        self._last_ar: Optional[float] = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._image_label = QLabel()
@@ -1611,6 +1614,31 @@ class WebcamPreviewWindow(QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start(poll_ms)
 
+    def _match_window_to_frame(self, frame_w: int, frame_h: int) -> None:
+        """Reshape the window to the video's aspect so the picture FILLS it.
+
+        fit_image_to_size letterboxes: it scales the frame to fit inside the
+        window and leaves the remainder black. With a fixed 16:9 window a
+        portrait phone camera therefore showed black bars down both sides.
+        Rather than crop the video, give the window the same shape as the
+        frame — then "fit" and "fill" are the same thing and no bar appears.
+
+        Runs only when the aspect actually changes (first frame, or the phone
+        is rotated), so it never fights the user resizing the window.
+        """
+        if frame_w <= 0 or frame_h <= 0:
+            return
+        ar = frame_w / frame_h
+        if self._last_ar is not None and abs(ar - self._last_ar) < 0.01:
+            return
+        self._last_ar = ar
+        w = min(PREVIEW_MAX_WIDTH, max(PREVIEW_DEFAULT_WIDTH, self.width()))
+        h = int(round(w / ar))
+        if h > PREVIEW_MAX_HEIGHT:            # too tall (portrait) — fit by height
+            h = PREVIEW_MAX_HEIGHT
+            w = max(1, int(round(h * ar)))
+        self.resize(w, h)
+
     def _tick(self) -> None:
         if self._stop_event.is_set():
             self.close()
@@ -1619,6 +1647,8 @@ class WebcamPreviewWindow(QWidget):
             bgr_frame = self._processed_queue.get_nowait()
         except queue.Empty:
             return
+        fh, fw = bgr_frame.shape[:2]
+        self._match_window_to_frame(fw, fh)
         bgr_frame = fit_image_to_size(bgr_frame, self.width(), self.height())
         self._image_label.setPixmap(_bgr_to_qpixmap(bgr_frame))
 

@@ -99,14 +99,44 @@ def _build_page(token: str) -> bytes:
     q = f"?k={token}" if token else ""
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
+        # viewport-fit=cover lets the page reach under a notch / rounded corners.
         "<meta name='viewport' content='width=device-width,initial-scale=1,"
-        "maximum-scale=1,user-scalable=no'>"
+        "maximum-scale=1,user-scalable=no,viewport-fit=cover'>"
+        "<meta name='mobile-web-app-capable' content='yes'>"
+        "<meta name='apple-mobile-web-app-status-bar-style' content='black-translucent'>"
         "<title>Live Face Swap — by Peter</title>"
-        "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
-        "img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}"
-        "</style></head><body>"
-        f"<img src='/stream.mjpg{q}' alt='live' onclick=\"if(document.fullscreenElement)"
-        "document.exitFullscreen();else document.documentElement.requestFullscreen();\">"
+        "<style>"
+        "*{margin:0;padding:0;box-sizing:border-box}"
+        # position:fixed + inset:0 pins the page to the VISIBLE viewport. height:100%
+        # alone is measured against the layout viewport, which on phones is taller
+        # than the screen while the address bar is showing — that is what made the
+        # page scroll. overscroll-behavior/touch-action kill the rubber-band drag.
+        "html,body{position:fixed;inset:0;width:100%;height:100%;background:#000;"
+        "overflow:hidden;overscroll-behavior:none;touch-action:none}"
+        "#v{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;"
+        "display:block}"
+        # 'fill' = object-fit:cover -> video covers the whole screen (crops overflow).
+        "body.fill #v{object-fit:cover}"
+        "#fs{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);"
+        "right:calc(env(safe-area-inset-right,0px) + 10px);width:40px;height:40px;"
+        "border:0;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;"
+        "font-size:19px;line-height:40px;text-align:center;cursor:pointer;"
+        "opacity:.55;z-index:2}"
+        "</style></head><body class='fill'>"
+        f"<img id='v' src='/stream.mjpg{q}' alt='live'>"
+        "<button id='fs' title='Fullscreen'>&#9974;</button>"
+        "<script>"
+        "var b=document.body,v=document.getElementById('v'),f=document.getElementById('fs');"
+        # Tap the picture: switch between filling the screen and showing everything.
+        "v.addEventListener('click',function(){b.classList.toggle('fill');});"
+        # Button: real browser fullscreen (hides the address bar entirely).
+        "f.addEventListener('click',function(e){e.stopPropagation();"
+        "var d=document.documentElement;"
+        "if(document.fullscreenElement||document.webkitFullscreenElement){"
+        "(document.exitFullscreen||document.webkitExitFullscreen).call(document);}"
+        "else{(d.requestFullscreen||d.webkitRequestFullscreen||"
+        "d.webkitRequestFullScreen).call(d);}});"
+        "</script>"
         "</body></html>"
     ).encode("utf-8")
 

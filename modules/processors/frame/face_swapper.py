@@ -592,7 +592,12 @@ def _landmark_paste_back(target_img: Frame, bgr_fake: np.ndarray,
 
     warped_fake = cv2.warpAffine(bgr_fake, IM_crop, (crop_w, crop_h),
                                  flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-    alpha = face_mask[y1:y2, x1:x2]
+    from modules.face_geometry import crop_support
+    support = cv2.warpAffine(crop_support(bgr_fake.shape), IM_crop,
+                             (crop_w, crop_h), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    alpha = np.rint(face_mask[y1:y2, x1:x2] * support).astype(np.uint8)
+    face_mask[y1:y2, x1:x2] = alpha
     alpha_3c = cv2.merge([alpha, alpha, alpha])
     inv_alpha = 255 - alpha_3c
     a_fake = cv2.multiply(warped_fake, alpha_3c, scale=1.0 / 255.0)
@@ -620,19 +625,10 @@ def _adaptive_face_alpha(face: Face, frame: Frame) -> Optional[np.ndarray]:
         return None
     h, w = frame.shape[:2]
 
-    outline = lm[0:33]                       # jaw + cheek contour
-    eyebrows = lm[33:43]
-    chin = lm[16]                            # chin tip
-    pts = outline
-    eb_center = eyebrows.mean(axis=0)
-    up = eb_center - chin
-    n = float(np.linalg.norm(up))
-    if n > 0:
-        up = up / n
-        forehead = eyebrows + up * (n * 0.60)            # gentle forehead reach
-        top_c = forehead.mean(axis=0)
-        forehead = (forehead - top_c) * 1.05 + top_c     # barely widen the top
-        pts = np.concatenate((outline, forehead), axis=0)
+    from modules.face_geometry import face_outline
+    pts = face_outline(face)
+    if pts is None:
+        return None
 
     try:
         hull = cv2.convexHull(pts.astype(np.float32))
@@ -1079,7 +1075,8 @@ def swap_face(source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
         # Flatten any blotchy local hot/dark patch the model itself baked in —
         # unconditional (not gated behind face_color_match), since this fixes
         # an inswapper artifact, not a preference toggle. See docstring.
-        bgr_fake = _flatten_local_highlights(bgr_fake)
+        if getattr(modules.globals, "flatten_face_lighting", False):
+            bgr_fake = _flatten_local_highlights(bgr_fake)
 
         # --- Optional: match the swapped face's color/lighting to the target ---
         # inswapper preserves the SOURCE identity's skin tone, which can clash with

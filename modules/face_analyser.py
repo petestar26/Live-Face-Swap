@@ -172,6 +172,8 @@ def build_average_source_face(paths: Any) -> Any:
     import numpy as np
     base = None
     embeddings = []
+    weights = []
+    import cv2
     for p in paths:
         try:
             img = imread_unicode(p)
@@ -187,12 +189,28 @@ def build_average_source_face(paths: Any) -> Any:
             continue
         # Use the UNIT embedding so every photo contributes equally (a photo with
         # a larger raw magnitude shouldn't dominate the blended identity).
-        embeddings.append(np.asarray(emb, dtype=np.float32))
+        vector = np.asarray(emb, dtype=np.float32)
+        if not np.isfinite(vector).all() or np.linalg.norm(vector) < 1e-6:
+            continue
+        vector = vector / np.linalg.norm(vector)
+        # Anchor to the first valid selected identity. This is a conservative
+        # outlier filter, not proof that photos depict the same person.
+        if embeddings and float(np.dot(embeddings[0], vector)) < 0.35:
+            continue
+        x1, y1, x2, y2 = np.asarray(f.bbox, dtype=int)
+        crop = img[max(0, y1):min(img.shape[0], y2), max(0, x1):min(img.shape[1], x2)]
+        if crop.size == 0:
+            continue
+        gray = cv2.cvtColor(cv2.resize(crop, (112, 112)), cv2.COLOR_BGR2GRAY)
+        sharpness = float(cv2.Laplacian(gray, cv2.CV_32F).var())
+        weight = np.clip(sharpness / 100.0, 0.1, 1.0) * np.clip(min(crop.shape[:2]) / 112.0, 0.1, 1.0)
+        embeddings.append(vector)
+        weights.append(float(weight))
         if base is None:
             base = f
     if base is None or not embeddings:
         return None
-    mean = np.mean(embeddings, axis=0).astype(np.float32)
+    mean = np.average(embeddings, axis=0, weights=weights).astype(np.float32)
     norm = float(np.linalg.norm(mean))
     if norm > 0:
         mean = mean / norm

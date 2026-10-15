@@ -1412,7 +1412,8 @@ class _ProcessingWorker(QThread):
         det_count = 0
         cached_target_face = None
         cached_many_faces = None
-        det_interval = max(1, round(self._fps * 0.08))
+        # Use current-frame geometry; stale landmarks slide during motion.
+        det_interval = 1
 
         while not self._stop.is_set():
             try:
@@ -1582,7 +1583,28 @@ class WebcamPreviewWindow(QWidget):
 
         self._cap = VideoCapturer(camera_index)
         if not self._cap.start(PREVIEW_DEFAULT_WIDTH, PREVIEW_DEFAULT_HEIGHT, 60):
-            update_status("Failed to start camera")
+            # "Failed to start camera" on its own sends people hunting for a bug
+            # in the app. The usual cause is picking a DroidCam slot that has no
+            # phone attached: the driver registers several slots (for multiple
+            # phones) but only the connected one carries video, and an empty slot
+            # cannot be opened at all. Name the likely cause and point at the
+            # slots that DO currently work.
+            _name = getattr(self._cap, "device_name", "") or "this camera"
+            _msg = f"Failed to start {_name}"
+            if "droidcam" in _name.lower():
+                _alts = []
+                try:
+                    from modules.video_capture import _index_for_backend
+                    import cv2 as _cv2
+                    for _n in get_available_cameras()[1]:
+                        if _n != _name and _index_for_backend(_n, _cv2.CAP_MSMF) is not None:
+                            _alts.append(_n)
+                except Exception:
+                    pass
+                _msg += " — that DroidCam slot has no phone connected."
+                if _alts:
+                    _msg += " Try: " + ", ".join(_alts[:3])
+            update_status(_msg)
             QTimer.singleShot(0, self.close)
             return
 

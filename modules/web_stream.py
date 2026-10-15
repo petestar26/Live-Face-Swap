@@ -107,14 +107,18 @@ def _build_page(token: str) -> bytes:
         "<title>Live Face Swap — by Peter</title>"
         "<style>"
         "*{margin:0;padding:0;box-sizing:border-box}"
-        # position:fixed + inset:0 pins the page to the VISIBLE viewport. height:100%
-        # alone is measured against the layout viewport, which on phones is taller
-        # than the screen while the address bar is showing — that is what made the
-        # page scroll. overscroll-behavior/touch-action kill the rubber-band drag.
-        "html,body{position:fixed;inset:0;width:100%;height:100%;background:#000;"
+        # NB: do NOT put position:fixed on html/body. It pins the page to the
+        # visible viewport on phones, but OBS's embedded browser (CEF) can then
+        # resolve the root box to zero size and render nothing at all — the
+        # source goes black. Keeping html/body in normal flow and pinning only
+        # the <img> gives the same full-bleed result in both places.
+        "html,body{width:100%;height:100%;background:#000;"
         "overflow:hidden;overscroll-behavior:none;touch-action:none}"
-        "#v{position:fixed;inset:0;width:100%;height:100%;object-fit:contain;"
-        "display:block}"
+        # 100dvh follows the *dynamic* viewport, so the phone's address bar
+        # appearing/disappearing can't make the page scroll. Plain vh first as
+        # the fallback for browsers without dvh.
+        "#v{position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;"
+        "object-fit:contain;display:block}"
         # 'fill' = object-fit:cover -> video covers the whole screen (crops overflow).
         "body.fill #v{object-fit:cover}"
         "#fs{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);"

@@ -238,6 +238,8 @@ def enhance_face_onnx(
     # Partial strength: keep ~20% of the natural (un-enhanced) swapped texture so
     # the face doesn't look airbrushed / "like makeup". Full GPEN replacement is
     # what made the swapped face read as a smooth plastic mask.
+    from modules.face_geometry import crop_support
+    mask *= crop_support(mask.shape)
     mask *= 0.82
 
     h, w = frame.shape[:2]
@@ -271,8 +273,8 @@ def enhance_face_onnx(
             resid = sub - cv2.GaussianBlur(sub, (0, 0), 1.0)
             grain_sigma = min(float(np.std(resid)), 7.0)
             if grain_sigma >= 1.2:
-                noise = np.random.normal(0.0, grain_sigma, sub.shape).astype(np.float32)
-                result[gy1:gy2, gx1:gx2] += noise * mask_3ch[gy1:gy2, gx1:gx2]
+                detail = np.clip(resid, -grain_sigma, grain_sigma)
+                result[gy1:gy2, gx1:gx2] += detail * mask_3ch[gy1:gy2, gx1:gx2] * 0.25
     except Exception:
         pass  # grain match is best-effort; never block enhancement
 
